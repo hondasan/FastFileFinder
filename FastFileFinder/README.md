@@ -17,6 +17,7 @@ FastFileFinder は Python 製スキャナ `fastfilefinder_scan.py` を WinForms 
   - ダブルクリックで `explorer.exe /select`、右クリックでフルパスコピー／親フォルダを開く。
   - Ctrl+C で選択行を TSV 形式コピー。
 - **詳細な進捗表示**: 経過時間、処理済み／対象ファイル数、ヒット件数、処理中パスをステータスバーに表示。
+- **Word 旧形式の診断ログ**: `.doc` 変換は `LOG .doc [Open]` → `LOG .doc [SaveAs]` → `LOG .doc [Read]` → `LOG .doc [Emit]` の順にステージを標準エラーへ記録し、失敗時は `ERR .doc [Stage]` を出力します。最初の 10 件の TSV 行は WinForms 側でデバッグ出力されるため、受信状況をその場で確認できます。
 
 ## 依存関係
 
@@ -80,7 +81,7 @@ python fastfilefinder_scan.py --folder <dir> --query <text>
 - `--exclude-folders` はフォルダ名単位でマッチし、サブツリー全体を探索対象から除外します。
 - `--max-workers` を 0 (既定) にすると `os.cpu_count()` を基準に自動調整します。
 - `--legacy-doc auto` にすると、COM で失敗した場合に LibreOffice (`soffice`) や `antiword` へ自動フォールバックします。`external` を指定すると COM を使用せず、外部ツールのみで試行します。
-- `--diag` を指定すると処理開始前に `diag: py=32, word-detect=OK, win32com-cache=...` のような診断行を標準エラーに出力します。
+- `--diag` を指定すると処理開始前に Python/Word の検出状況を表示し、さらに `.doc` を処理するタイミングで `diag: py=64, word=64, gencache=..., perfile=0, exts=*, legacy-doc-mode=com` のような診断行を一度だけ標準エラーへ出力します。
 
 ## チューニングと注意点
 
@@ -93,16 +94,17 @@ python fastfilefinder_scan.py --folder <dir> --query <text>
 
 `.doc` 変換は `--legacy-doc` のモードに従います。既定の `com` では Microsoft Word COM (pywin32) のみを使用し、確実に Word でテキスト化します。`auto` を選択した場合は COM → LibreOffice (`soffice --headless`) → `antiword` の順でフォールバックし、`external` を選択すると最初から外部ツールのみを使用します。
 
-COM 変換が失敗すると `ERR .doc convert failed [COM-Open]: <path> (HRESULT=0x..., msg=...)` のような 1 行メッセージを標準エラーに記録します。段階別のメッセージから原因を切り分けられます。
+Word COM 変換が成功すると `LOG .doc [Open] <path>` → `LOG .doc [SaveAs] <tmp>` → `LOG .doc [Read] <tmp>` → `LOG .doc [Emit] <path> (<hits> hits)` の順にステージログを標準エラーへ出力します。失敗時は `ERR .doc [Stage] <path> (HRESULT=0x..., msg=...)` の形式で理由を明示します。保存は常に UTF-16 (wdFormatUnicodeText) で実施し、ファイルサイズが 0 バイトのままなら再試行せず直ちに失敗と判断します。
 
 #### 典型的なメッセージと対処例
 
-- `[COM-Init]` — `pywin32` が未インストール、または `pythoncom.CoInitialize()` に失敗しました。`pip install pywin32` と `python -m pywin32_postinstall -install` を再実行してください。
-- `[COM-Launch]` — Word COM を起動できません。Word のインストールと Office/Python のビット数一致 (例: 32bit Word + 32bit Python) を確認します。
-- `[COM-Open]` — 対象ドキュメントの読み込みに失敗しました。ファイルのロック、パス長、エンコードを確認してください。
-- `[COM-SaveAs]` / `[COM-Read]` — Word での保存または保存済みファイルの読み込みに失敗しました。保護ビューやアクセス権を確認してください。
+- `[Init]` — `pywin32` が未インストール、または `pythoncom.CoInitialize()` に失敗しました。`pip install pywin32` と `python -m pywin32_postinstall -install` を再実行してください。
+- `[Launch]` — Word COM を起動できません。Word のインストールと Office/Python のビット数一致 (例: 32bit Word + 32bit Python) を確認します。
+- `[Open]` — 対象ドキュメントの読み込みに失敗しました。ファイルのロック、パス長、エンコードを確認してください。
+- `[SaveAs]` — UTF-16 テキストへの保存に失敗した、または保存後もファイルサイズが 0 バイトのままでした。保護ビューやアクセス権を確認してください。
+- `[Read]` — 保存済みテキストの読み込みに失敗しました。ウイルス対策やファイルアクセス権を確認してください。
 
-診断が必要な場合は `--diag` を指定し、`word-detect=OK/NG` や `win32com-cache` のパスを確認してください。`auto` や `external` モードを利用する際は LibreOffice (`soffice`) や `antiword` を PATH 上に用意する必要があります。
+診断が必要な場合は `--diag` を指定し、開始直後の `diag: py=..., word-detect=..., win32com-cache=...` と `.doc` 変換開始時の `diag: py=..., word=..., gencache=..., perfile=..., exts=..., legacy-doc-mode=...` を確認してください。`auto` や `external` モードを利用する際は LibreOffice (`soffice`) や `antiword` を PATH 上に用意する必要があります。
 
 ## ライセンス
 

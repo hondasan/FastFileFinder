@@ -66,6 +66,7 @@ namespace FastFileFinder
 
         private string _statusMessage = string.Empty;
         private DateTime _statusMessageUntil = DateTime.MinValue;
+        private int _tsvDebugLinesLogged;
 
         public Form1()
         {
@@ -940,6 +941,7 @@ namespace FastFileFinder
             _currentFile = string.Empty;
             _statusMessage = string.Empty;
             _statusMessageUntil = DateTime.MinValue;
+            _tsvDebugLinesLogged = 0;
 
             _stopwatch.Reset();
             _stopwatch.Start();
@@ -1261,6 +1263,20 @@ namespace FastFileFinder
             if (parts.Length < 4)
             {
                 return;
+            }
+
+            if (_tsvDebugLinesLogged < 10)
+            {
+                int index = Interlocked.Increment(ref _tsvDebugLinesLogged);
+                if (index <= 10)
+                {
+                    Debug.WriteLine($"[FastFileFinder TSV {index}] {e.Data}");
+                    if (index == 10)
+                    {
+                        BeginInvoke((Action)(() =>
+                            SetStatusMessage("TSVデバッグ: 最初の10行をデバッグ出力しました", TimeSpan.FromSeconds(6))));
+                    }
+                }
             }
 
             string path = parts[0];
