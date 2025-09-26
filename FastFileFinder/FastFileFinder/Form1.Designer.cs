@@ -66,6 +66,7 @@ namespace FastFileFinder
             this.chkZip = new System.Windows.Forms.CheckBox();
             this.resultsGrid = new System.Windows.Forms.DataGridView();
             this.columnPath = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.columnExt = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnEntry = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnLine = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnSnippet = new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -535,6 +536,7 @@ namespace FastFileFinder
             this.resultsGrid.ColumnHeadersHeight = 36;
             this.resultsGrid.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.columnPath,
+            this.columnExt,
             this.columnEntry,
             this.columnLine,
             this.columnSnippet});
@@ -563,14 +565,21 @@ namespace FastFileFinder
             this.resultsGrid.CellMouseEnter += new System.Windows.Forms.DataGridViewCellEventHandler(this.ResultsGrid_CellMouseEnter);
             // 
             // columnPath
-            // 
+            //
             this.columnPath.FillWeight = 40F;
             this.columnPath.HeaderText = "Path";
             this.columnPath.Name = "columnPath";
             this.columnPath.ReadOnly = true;
-            // 
+            //
+            // columnExt
+            //
+            this.columnExt.FillWeight = 8F;
+            this.columnExt.HeaderText = "Ext";
+            this.columnExt.Name = "columnExt";
+            this.columnExt.ReadOnly = true;
+            //
             // columnEntry
-            // 
+            //
             this.columnEntry.FillWeight = 15F;
             this.columnEntry.HeaderText = "Entry";
             this.columnEntry.Name = "columnEntry";
@@ -764,6 +773,7 @@ namespace FastFileFinder
         private System.Windows.Forms.CheckBox chkZip;
         private System.Windows.Forms.DataGridView resultsGrid;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnPath;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnExt;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnEntry;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnLine;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnSnippet;

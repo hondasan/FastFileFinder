@@ -334,6 +334,9 @@ namespace FastFileFinder
                 case "columnPath":
                     comparison = (a, b) => string.Compare(_allResults[a].DisplayPath, _allResults[b].DisplayPath, StringComparison.OrdinalIgnoreCase);
                     break;
+                case "columnExt":
+                    comparison = (a, b) => string.Compare(_allResults[a].Extension, _allResults[b].Extension, StringComparison.OrdinalIgnoreCase);
+                    break;
                 case "columnEntry":
                     comparison = (a, b) => string.Compare(_allResults[a].Entry, _allResults[b].Entry, StringComparison.OrdinalIgnoreCase);
                     break;
@@ -363,6 +366,10 @@ namespace FastFileFinder
             if (e.ColumnIndex == columnPath.Index)
             {
                 e.Value = result.DisplayPath;
+            }
+            else if (e.ColumnIndex == columnExt.Index)
+            {
+                e.Value = result.Extension;
             }
             else if (e.ColumnIndex == columnEntry.Index)
             {
@@ -1148,7 +1155,10 @@ namespace FastFileFinder
             int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int line);
             string snippet = parts[3];
 
-            var result = new SearchResult(path, ToDisplayPath(path), entry, line, snippet, BuildHighlights(snippet));
+            string extension = Path.GetExtension(path);
+            string extDisplay = string.IsNullOrEmpty(extension) ? string.Empty : extension.TrimStart('.');
+
+            var result = new SearchResult(path, ToDisplayPath(path), extDisplay, entry, line, snippet, BuildHighlights(snippet));
             _pendingResults.Enqueue(result);
         }
 
@@ -1448,10 +1458,11 @@ namespace FastFileFinder
 
         private sealed class SearchResult
         {
-            public SearchResult(string fullPath, string displayPath, string entry, int lineNumber, string snippet, IReadOnlyList<HighlightSpan> highlights)
+            public SearchResult(string fullPath, string displayPath, string extension, string entry, int lineNumber, string snippet, IReadOnlyList<HighlightSpan> highlights)
             {
                 FullPath = fullPath;
                 DisplayPath = displayPath;
+                Extension = extension ?? string.Empty;
                 Entry = entry;
                 LineNumber = lineNumber;
                 Snippet = snippet;
@@ -1460,6 +1471,7 @@ namespace FastFileFinder
 
             public string FullPath { get; }
             public string DisplayPath { get; }
+            public string Extension { get; }
             public string Entry { get; }
             public int LineNumber { get; }
             public string Snippet { get; }
