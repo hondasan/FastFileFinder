@@ -51,8 +51,8 @@ namespace FastFileFinder
         private bool _cancelRequested;
 
         private bool _searchIsRegex;
-        private Regex _searchRegex;
-        private string _searchLower = string.Empty;
+        private readonly List<Regex> _searchRegexes = new List<Regex>();
+        private string[] _searchLowers = Array.Empty<string>();
 
         private string[] _quickFilterTokens = Array.Empty<string>();
         private bool _sortDescending;
@@ -89,6 +89,8 @@ namespace FastFileFinder
             EnableDoubleBuffer(resultsGrid);
 
             txtExclude.Text = ".git;node_modules;bin;obj;.vs";
+
+            comboKeywordMode.SelectedIndex = 0;
 
             ApplyButtonStyles();
 
@@ -141,7 +143,7 @@ namespace FastFileFinder
             button.FlatAppearance.MouseDownBackColor = isPrimary ? PrimaryButtonPressedColor : ButtonPressedColor;
             button.BackColor = isPrimary ? PrimaryButtonNormalColor : ButtonNormalColor;
             button.ForeColor = isPrimary ? Color.White : ButtonTextColor;
-            button.Padding = new Padding(12, 8, 12, 8);
+            button.Padding = new Padding(10, 5, 10, 5);
             button.UseVisualStyleBackColor = false;
         }
 
@@ -402,6 +404,24 @@ namespace FastFileFinder
 
             foreach (var token in _quickFilterTokens)
             {
+                if (!string.IsNullOrEmpty(result.FileName) &&
+                    result.FileName.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(result.Extension) &&
+                    result.Extension.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(result.DirectoryPath) &&
+                    result.DirectoryPath.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
                 if (result.DisplayPath?.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     continue;
@@ -433,8 +453,11 @@ namespace FastFileFinder
             Comparison<int> comparison = null;
             switch (_sortColumn)
             {
+                case "columnFileName":
+                    comparison = (a, b) => string.Compare(_allResults[a].FileName, _allResults[b].FileName, StringComparison.OrdinalIgnoreCase);
+                    break;
                 case "columnPath":
-                    comparison = (a, b) => string.Compare(_allResults[a].DisplayPath, _allResults[b].DisplayPath, StringComparison.OrdinalIgnoreCase);
+                    comparison = (a, b) => string.Compare(_allResults[a].DirectoryPath, _allResults[b].DirectoryPath, StringComparison.OrdinalIgnoreCase);
                     break;
                 case "columnExt":
                     comparison = (a, b) => string.Compare(_allResults[a].Extension, _allResults[b].Extension, StringComparison.OrdinalIgnoreCase);
@@ -465,13 +488,17 @@ namespace FastFileFinder
                 return;
             }
 
-            if (e.ColumnIndex == columnPath.Index)
+            if (e.ColumnIndex == columnFileName.Index)
             {
-                e.Value = result.DisplayPath;
+                e.Value = result.FileName;
             }
             else if (e.ColumnIndex == columnExt.Index)
             {
                 e.Value = result.Extension;
+            }
+            else if (e.ColumnIndex == columnPath.Index)
+            {
+                e.Value = string.IsNullOrEmpty(result.DirectoryPath) ? result.DisplayPath : result.DirectoryPath;
             }
             else if (e.ColumnIndex == columnEntry.Index)
             {
@@ -894,12 +921,28 @@ namespace FastFileFinder
                 return;
             }
 
-            string query = txtQuery.Text;
-            if (string.IsNullOrEmpty(query))
+            string keyword1 = txtKeyword1.Text.Trim();
+            string keyword2 = txtKeyword2.Text.Trim();
+            if (string.IsNullOrEmpty(keyword1) && string.IsNullOrEmpty(keyword2))
             {
                 MessageBox.Show(this, "検索語を入力してください。", "FastFileFinder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            var keywords = new List<string>();
+            if (!string.IsNullOrEmpty(keyword1))
+            {
+                keywords.Add(keyword1);
+            }
+
+            if (!string.IsNullOrEmpty(keyword2))
+            {
+                keywords.Add(keyword2);
+            }
+
+            string keywordLogic = GetKeywordLogic();
+            string primaryKeyword = keywords.Count > 0 ? keywords[0] : string.Empty;
+            string secondaryKeyword = keywords.Count > 1 ? keywords[1] : string.Empty;
 
             string scriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fastfilefinder_scan.py");
             if (!File.Exists(scriptPath))
@@ -927,7 +970,7 @@ namespace FastFileFinder
 
             string folderArgument = ToExtendedPath(displayFolder);
 
-            PrepareHighlight(query, chkRegex.Checked);
+            PrepareHighlight(keywords, chkRegex.Checked);
 
             _pendingResults = new ConcurrentQueue<SearchResult>();
             _allResults.Clear();
@@ -950,7 +993,7 @@ namespace FastFileFinder
 
             AddRecentFolder(displayFolder);
 
-            string arguments = BuildArguments(scriptPath, folderArgument, query);
+            string arguments = BuildArguments(scriptPath, folderArgument, primaryKeyword, secondaryKeyword, keywordLogic);
 
             var psi = new ProcessStartInfo
             {
@@ -990,14 +1033,24 @@ namespace FastFileFinder
             }
         }
 
-        private string BuildArguments(string scriptPath, string folder, string query)
+        private string BuildArguments(string scriptPath, string folder, string primaryKeyword, string secondaryKeyword, string logic)
         {
             var args = new List<string>
             {
                 scriptPath,
                 "--folder", folder,
-                "--query", query,
+                "--query", primaryKeyword,
             };
+
+            if (!string.IsNullOrEmpty(secondaryKeyword))
+            {
+                args.Add("--query2");
+                args.Add(secondaryKeyword);
+            }
+
+            string normalizedLogic = string.Equals(logic, "or", StringComparison.OrdinalIgnoreCase) ? "or" : "and";
+            args.Add("--logic");
+            args.Add(normalizedLogic);
 
             if (chkRegex.Checked)
             {
@@ -1054,6 +1107,16 @@ namespace FastFileFinder
             return string.Join(" ", args.Select(QuoteArgument));
         }
 
+        private string GetKeywordLogic()
+        {
+            if (comboKeywordMode.SelectedItem is string selected)
+            {
+                return string.Equals(selected, "OR", StringComparison.OrdinalIgnoreCase) ? "or" : "and";
+            }
+
+            return comboKeywordMode.SelectedIndex == 1 ? "or" : "and";
+        }
+
         private static string QuoteArgument(string arg)
         {
             if (string.IsNullOrEmpty(arg))
@@ -1102,24 +1165,29 @@ namespace FastFileFinder
             return sb.ToString();
         }
 
-        private void PrepareHighlight(string query, bool isRegex)
+        private void PrepareHighlight(IEnumerable<string> keywords, bool isRegex)
         {
-            _searchRegex = null;
-            _searchLower = string.Empty;
+            _searchRegexes.Clear();
+            _searchLowers = Array.Empty<string>();
+
+            var normalized = keywords?.Where(k => !string.IsNullOrWhiteSpace(k)).ToList() ?? new List<string>();
             if (isRegex)
             {
-                try
+                foreach (var keyword in normalized)
                 {
-                    _searchRegex = new Regex(query, RegexOptions.IgnoreCase | RegexOptions.Compiled);
-                }
-                catch
-                {
-                    _searchRegex = null;
+                    try
+                    {
+                        _searchRegexes.Add(new Regex(keyword, RegexOptions.IgnoreCase | RegexOptions.Compiled));
+                    }
+                    catch
+                    {
+                        // Ignore invalid patterns for highlighting
+                    }
                 }
             }
             else
             {
-                _searchLower = query?.ToLowerInvariant() ?? string.Empty;
+                _searchLowers = normalized.Select(k => k.ToLowerInvariant()).ToArray();
             }
         }
 
@@ -1132,43 +1200,74 @@ namespace FastFileFinder
 
             if (_searchIsRegex)
             {
-                if (_searchRegex == null)
+                if (_searchRegexes.Count == 0)
                 {
                     return Array.Empty<HighlightSpan>();
                 }
 
-                var match = _searchRegex.Match(text);
-                if (!match.Success)
+                var regexSpans = new List<HighlightSpan>();
+                foreach (var regex in _searchRegexes)
+                {
+                    try
+                    {
+                        var match = regex.Match(text);
+                        if (match.Success)
+                        {
+                            regexSpans.Add(new HighlightSpan(match.Index, match.Length));
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore highlight failures for malformed expressions
+                    }
+                }
+
+                if (regexSpans.Count == 0)
                 {
                     return Array.Empty<HighlightSpan>();
                 }
 
-                return new[] { new HighlightSpan(match.Index, match.Length) };
+                regexSpans.Sort((a, b) => a.Start.CompareTo(b.Start));
+                return regexSpans;
             }
 
-            if (string.IsNullOrEmpty(_searchLower))
+            if (_searchLowers.Length == 0)
             {
                 return Array.Empty<HighlightSpan>();
             }
 
             var spans = new List<HighlightSpan>();
-            int index = 0;
-            while (index < text.Length)
+            foreach (string keyword in _searchLowers)
             {
-                int found = text.IndexOf(_searchLower, index, StringComparison.OrdinalIgnoreCase);
-                if (found < 0)
+                int searchIndex = 0;
+                while (searchIndex < text.Length)
                 {
-                    break;
+                    int found = text.IndexOf(keyword, searchIndex, StringComparison.OrdinalIgnoreCase);
+                    if (found < 0)
+                    {
+                        break;
+                    }
+
+                    spans.Add(new HighlightSpan(found, keyword.Length));
+                    searchIndex = found + Math.Max(1, keyword.Length);
+                    if (spans.Count > 128)
+                    {
+                        break;
+                    }
                 }
 
-                spans.Add(new HighlightSpan(found, _searchLower.Length));
-                index = found + _searchLower.Length;
-                if (spans.Count > 64)
+                if (spans.Count > 128)
                 {
                     break;
                 }
             }
 
+            if (spans.Count == 0)
+            {
+                return Array.Empty<HighlightSpan>();
+            }
+
+            spans.Sort((a, b) => a.Start.CompareTo(b.Start));
             return spans;
         }
 
@@ -1460,7 +1559,9 @@ namespace FastFileFinder
             comboRecent.Enabled = enabled;
             txtPythonPath.ReadOnly = !enabled;
             btnBrowsePython.Enabled = enabled;
-            txtQuery.ReadOnly = !enabled;
+            txtKeyword1.ReadOnly = !enabled;
+            txtKeyword2.ReadOnly = !enabled;
+            comboKeywordMode.Enabled = enabled;
             chkRegex.Enabled = enabled;
             txtExtensions.ReadOnly = !enabled;
             txtExclude.ReadOnly = !enabled;
@@ -1533,10 +1634,11 @@ namespace FastFileFinder
                 return;
             }
 
+            string defaultName = "検索結果_" + DateTime.Now.ToString("yyyyMMdd_HHmm", CultureInfo.InvariantCulture) + ".csv";
             using (var dialog = new SaveFileDialog
             {
                 Filter = "CSV (*.csv)|*.csv|TSV (*.tsv)|*.tsv|All Files (*.*)|*.*",
-                FileName = "FastFileFinder.csv",
+                FileName = defaultName,
             })
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -1727,6 +1829,8 @@ namespace FastFileFinder
                 LineNumber = lineNumber;
                 Snippet = snippet;
                 Highlights = highlights ?? Array.Empty<HighlightSpan>();
+                FileName = ExtractFileName(displayPath);
+                DirectoryPath = ExtractDirectory(displayPath, fullPath);
             }
 
             public string FullPath { get; }
@@ -1736,6 +1840,60 @@ namespace FastFileFinder
             public int LineNumber { get; }
             public string Snippet { get; }
             public IReadOnlyList<HighlightSpan> Highlights { get; }
+            public string FileName { get; }
+            public string DirectoryPath { get; }
+
+            private static string ExtractFileName(string path)
+            {
+                if (string.IsNullOrEmpty(path))
+                {
+                    return string.Empty;
+                }
+
+                try
+                {
+                    string fileName = Path.GetFileNameWithoutExtension(path);
+                    if (string.IsNullOrEmpty(fileName))
+                    {
+                        fileName = Path.GetFileName(path);
+                    }
+
+                    return fileName ?? string.Empty;
+                }
+                catch
+                {
+                    return path;
+                }
+            }
+
+            private static string ExtractDirectory(string displayPath, string fullPath)
+            {
+                string TryGet(string value)
+                {
+                    if (string.IsNullOrEmpty(value))
+                    {
+                        return string.Empty;
+                    }
+
+                    try
+                    {
+                        return Path.GetDirectoryName(value) ?? string.Empty;
+                    }
+                    catch
+                    {
+                        return string.Empty;
+                    }
+                }
+
+                string fromDisplay = TryGet(displayPath);
+                if (!string.IsNullOrEmpty(fromDisplay))
+                {
+                    return fromDisplay;
+                }
+
+                string fromFull = TryGet(fullPath);
+                return !string.IsNullOrEmpty(fromFull) ? fromFull : displayPath ?? string.Empty;
+            }
         }
 
         private readonly struct HighlightSpan

@@ -47,7 +47,9 @@ namespace FastFileFinder
             this.btnBrowsePython = new System.Windows.Forms.Button();
             this.labelQuery = new System.Windows.Forms.Label();
             this.flowQuery = new System.Windows.Forms.FlowLayoutPanel();
-            this.txtQuery = new System.Windows.Forms.TextBox();
+            this.txtKeyword1 = new System.Windows.Forms.TextBox();
+            this.comboKeywordMode = new System.Windows.Forms.ComboBox();
+            this.txtKeyword2 = new System.Windows.Forms.TextBox();
             this.chkRegex = new System.Windows.Forms.CheckBox();
             this.labelExtensions = new System.Windows.Forms.Label();
             this.txtExtensions = new System.Windows.Forms.TextBox();
@@ -69,8 +71,9 @@ namespace FastFileFinder
             this.chkRecursive = new System.Windows.Forms.CheckBox();
             this.chkZip = new System.Windows.Forms.CheckBox();
             this.resultsGrid = new System.Windows.Forms.DataGridView();
-            this.columnPath = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.columnFileName = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnExt = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.columnPath = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnEntry = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnLine = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnSnippet = new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -328,14 +331,16 @@ namespace FastFileFinder
             this.labelQuery.Name = "labelQuery";
             this.labelQuery.Size = new System.Drawing.Size(144, 32);
             this.labelQuery.TabIndex = 4;
-            this.labelQuery.Text = "内容フィルタ";
+            this.labelQuery.Text = "キーワード";
             this.labelQuery.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-            // 
+            //
             // flowQuery
-            // 
+            //
             this.flowQuery.AutoSize = true;
             this.flowQuery.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.flowQuery.Controls.Add(this.txtQuery);
+            this.flowQuery.Controls.Add(this.txtKeyword1);
+            this.flowQuery.Controls.Add(this.comboKeywordMode);
+            this.flowQuery.Controls.Add(this.txtKeyword2);
             this.flowQuery.Controls.Add(this.chkRegex);
             this.flowQuery.Dock = System.Windows.Forms.DockStyle.Fill;
             this.flowQuery.Location = new System.Drawing.Point(153, 67);
@@ -343,22 +348,41 @@ namespace FastFileFinder
             this.flowQuery.Size = new System.Drawing.Size(1000, 26);
             this.flowQuery.TabIndex = 5;
             this.flowQuery.WrapContents = false;
-            // 
-            // txtQuery
-            // 
-            this.txtQuery.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
-            this.txtQuery.Name = "txtQuery";
-            this.txtQuery.Size = new System.Drawing.Size(420, 23);
-            this.txtQuery.TabIndex = 0;
-            // 
+            //
+            // txtKeyword1
+            //
+            this.txtKeyword1.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
+            this.txtKeyword1.Name = "txtKeyword1";
+            this.txtKeyword1.Size = new System.Drawing.Size(260, 23);
+            this.txtKeyword1.TabIndex = 0;
+            //
+            // comboKeywordMode
+            //
+            this.comboKeywordMode.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.comboKeywordMode.FormattingEnabled = true;
+            this.comboKeywordMode.Items.AddRange(new object[] {
+            "AND",
+            "OR"});
+            this.comboKeywordMode.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
+            this.comboKeywordMode.Name = "comboKeywordMode";
+            this.comboKeywordMode.Size = new System.Drawing.Size(72, 23);
+            this.comboKeywordMode.TabIndex = 1;
+            //
+            // txtKeyword2
+            //
+            this.txtKeyword2.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
+            this.txtKeyword2.Name = "txtKeyword2";
+            this.txtKeyword2.Size = new System.Drawing.Size(260, 23);
+            this.txtKeyword2.TabIndex = 2;
+            //
             // chkRegex
-            // 
+            //
             this.chkRegex.AutoSize = true;
-            this.chkRegex.Location = new System.Drawing.Point(428, 3);
-            this.chkRegex.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
+            this.chkRegex.Location = new System.Drawing.Point(0, 0);
+            this.chkRegex.Margin = new System.Windows.Forms.Padding(0, 3, 8, 0);
             this.chkRegex.Name = "chkRegex";
             this.chkRegex.Size = new System.Drawing.Size(86, 19);
-            this.chkRegex.TabIndex = 1;
+            this.chkRegex.TabIndex = 3;
             this.chkRegex.Text = "正規表現";
             this.chkRegex.UseVisualStyleBackColor = true;
             // 
@@ -603,8 +627,9 @@ namespace FastFileFinder
             this.resultsGrid.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
             this.resultsGrid.ColumnHeadersHeight = 36;
             this.resultsGrid.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
-            this.columnPath,
+            this.columnFileName,
             this.columnExt,
+            this.columnPath,
             this.columnEntry,
             this.columnLine,
             this.columnSnippet});
@@ -632,38 +657,45 @@ namespace FastFileFinder
             this.resultsGrid.MouseLeave += new System.EventHandler(this.ResultsGrid_MouseLeave);
             this.resultsGrid.CellMouseEnter += new System.Windows.Forms.DataGridViewCellEventHandler(this.ResultsGrid_CellMouseEnter);
             // 
-            // columnPath
+            // columnFileName
             //
-            this.columnPath.FillWeight = 40F;
-            this.columnPath.HeaderText = "Path";
-            this.columnPath.Name = "columnPath";
-            this.columnPath.ReadOnly = true;
+            this.columnFileName.FillWeight = 20F;
+            this.columnFileName.HeaderText = "ファイル名";
+            this.columnFileName.Name = "columnFileName";
+            this.columnFileName.ReadOnly = true;
             //
             // columnExt
             //
-            this.columnExt.FillWeight = 8F;
-            this.columnExt.HeaderText = "Ext";
+            this.columnExt.FillWeight = 10F;
+            this.columnExt.HeaderText = "拡張子";
             this.columnExt.Name = "columnExt";
             this.columnExt.ReadOnly = true;
             //
+            // columnPath
+            //
+            this.columnPath.FillWeight = 35F;
+            this.columnPath.HeaderText = "パス";
+            this.columnPath.Name = "columnPath";
+            this.columnPath.ReadOnly = true;
+            //
             // columnEntry
             //
-            this.columnEntry.FillWeight = 15F;
-            this.columnEntry.HeaderText = "Entry";
+            this.columnEntry.FillWeight = 12F;
+            this.columnEntry.HeaderText = "エントリ";
             this.columnEntry.Name = "columnEntry";
             this.columnEntry.ReadOnly = true;
-            // 
+            //
             // columnLine
-            // 
+            //
             this.columnLine.FillWeight = 8F;
-            this.columnLine.HeaderText = "Line";
+            this.columnLine.HeaderText = "行";
             this.columnLine.Name = "columnLine";
             this.columnLine.ReadOnly = true;
-            // 
+            //
             // columnSnippet
-            // 
-            this.columnSnippet.FillWeight = 37F;
-            this.columnSnippet.HeaderText = "Snippet";
+            //
+            this.columnSnippet.FillWeight = 35F;
+            this.columnSnippet.HeaderText = "スニペット";
             this.columnSnippet.Name = "columnSnippet";
             this.columnSnippet.ReadOnly = true;
             // 
@@ -825,7 +857,9 @@ namespace FastFileFinder
         private System.Windows.Forms.Button btnBrowsePython;
         private System.Windows.Forms.Label labelQuery;
         private System.Windows.Forms.FlowLayoutPanel flowQuery;
-        private System.Windows.Forms.TextBox txtQuery;
+        private System.Windows.Forms.TextBox txtKeyword1;
+        private System.Windows.Forms.ComboBox comboKeywordMode;
+        private System.Windows.Forms.TextBox txtKeyword2;
         private System.Windows.Forms.CheckBox chkRegex;
         private System.Windows.Forms.Label labelExtensions;
         private System.Windows.Forms.TextBox txtExtensions;
@@ -847,8 +881,9 @@ namespace FastFileFinder
         private System.Windows.Forms.CheckBox chkRecursive;
         private System.Windows.Forms.CheckBox chkZip;
         private System.Windows.Forms.DataGridView resultsGrid;
-        private System.Windows.Forms.DataGridViewTextBoxColumn columnPath;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnFileName;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnExt;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnPath;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnEntry;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnLine;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnSnippet;
