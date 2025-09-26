@@ -45,5 +45,20 @@ namespace FastFileFinder.Properties
                 this["RecentFolders"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string PythonExecutablePath
+        {
+            get
+            {
+                return ((string)(this["PythonExecutablePath"])) ?? string.Empty;
+            }
+            set
+            {
+                this["PythonExecutablePath"] = value;
+            }
+        }
     }
 }

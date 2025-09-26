@@ -26,6 +26,19 @@ namespace FastFileFinder
         private static readonly Color SelectionColor = Color.FromArgb(229, 241, 251);
         private static readonly Color HighlightColor = Color.FromArgb(255, 236, 179);
 
+        private static readonly Color ButtonNormalColor = Color.FromArgb(245, 246, 248);
+        private static readonly Color ButtonHoverColor = Color.FromArgb(233, 237, 245);
+        private static readonly Color ButtonPressedColor = Color.FromArgb(220, 227, 239);
+        private static readonly Color ButtonBorderColor = Color.FromArgb(197, 202, 215);
+        private static readonly Color ButtonTextColor = Color.FromArgb(34, 34, 34);
+        private static readonly Color ButtonDisabledBackColor = Color.FromArgb(237, 239, 243);
+        private static readonly Color ButtonDisabledTextColor = Color.FromArgb(136, 136, 136);
+
+        private static readonly Color PrimaryButtonNormalColor = Color.FromArgb(0, 120, 212);
+        private static readonly Color PrimaryButtonHoverColor = Color.FromArgb(10, 132, 255);
+        private static readonly Color PrimaryButtonPressedColor = Color.FromArgb(6, 111, 214);
+        private static readonly Color PrimaryButtonBorderColor = Color.FromArgb(0, 98, 168);
+
         private ConcurrentQueue<SearchResult> _pendingResults = new ConcurrentQueue<SearchResult>();
         private readonly List<SearchResult> _allResults = new List<SearchResult>();
         private readonly List<int> _visibleIndices = new List<int>();
@@ -76,6 +89,8 @@ namespace FastFileFinder
 
             txtExclude.Text = ".git;node_modules;bin;obj;.vs";
 
+            ApplyButtonStyles();
+
             uiTimer.Start();
         }
 
@@ -85,8 +100,53 @@ namespace FastFileFinder
             property?.SetValue(grid, true, null);
         }
 
+        private void ApplyButtonStyles()
+        {
+            ApplyButtonStyle(btnBrowse, isPrimary: false);
+            ApplyButtonStyle(btnBrowsePython, isPrimary: false);
+
+            toolStripButtonStart.Tag = ModernToolStripRenderer.ButtonStyle.Primary;
+            toolStripButtonCancel.Tag = ModernToolStripRenderer.ButtonStyle.Primary;
+            toolStripButtonExport.Tag = ModernToolStripRenderer.ButtonStyle.Primary;
+
+            toolStripMain.Renderer = new ModernToolStripRenderer(
+                ButtonNormalColor,
+                ButtonHoverColor,
+                ButtonPressedColor,
+                ButtonBorderColor,
+                ButtonTextColor,
+                ButtonDisabledBackColor,
+                ButtonDisabledTextColor,
+                PrimaryButtonNormalColor,
+                PrimaryButtonHoverColor,
+                PrimaryButtonPressedColor,
+                PrimaryButtonBorderColor,
+                Color.White);
+
+            toolStripMain.BackColor = Color.White;
+        }
+
+        private static void ApplyButtonStyle(Button button, bool isPrimary)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.BorderColor = isPrimary ? PrimaryButtonBorderColor : ButtonBorderColor;
+            button.FlatAppearance.MouseOverBackColor = isPrimary ? PrimaryButtonHoverColor : ButtonHoverColor;
+            button.FlatAppearance.MouseDownBackColor = isPrimary ? PrimaryButtonPressedColor : ButtonPressedColor;
+            button.BackColor = isPrimary ? PrimaryButtonNormalColor : ButtonNormalColor;
+            button.ForeColor = isPrimary ? Color.White : ButtonTextColor;
+            button.Padding = new Padding(12, 8, 12, 8);
+            button.UseVisualStyleBackColor = false;
+        }
+
         private void Form1_Load(object sender, EventArgs e)
         {
+            txtPythonPath.Text = Properties.Settings.Default.PythonExecutablePath ?? string.Empty;
             LoadRecentFolders();
             UpdateStatusDisplay();
         }
@@ -135,7 +195,6 @@ namespace FastFileFinder
             }
 
             Properties.Settings.Default.RecentFolders = collection;
-            Properties.Settings.Default.Save();
         }
 
         private void AddRecentFolder(string path)
@@ -169,7 +228,9 @@ namespace FastFileFinder
                 TryWaitForProcessExit();
             }
 
+            Properties.Settings.Default.PythonExecutablePath = txtPythonPath.Text.Trim();
             SaveRecentFolders();
+            Properties.Settings.Default.Save();
         }
 
         private void TryWaitForProcessExit()
@@ -208,6 +269,46 @@ namespace FastFileFinder
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
                     txtRoot.Text = dialog.SelectedPath;
+                }
+            }
+        }
+
+        private void BtnBrowsePython_Click(object sender, EventArgs e)
+        {
+            using (var dialog = new OpenFileDialog())
+            {
+                dialog.Filter = "Python 実行ファイル (python.exe)|python.exe|実行ファイル (*.exe)|*.exe|すべてのファイル (*.*)|*.*";
+                dialog.Title = "Python 実行ファイルを選択";
+                dialog.CheckFileExists = true;
+
+                string current = txtPythonPath.Text.Trim();
+                if (!string.IsNullOrEmpty(current))
+                {
+                    try
+                    {
+                        if (File.Exists(current))
+                        {
+                            dialog.InitialDirectory = Path.GetDirectoryName(Path.GetFullPath(current));
+                            dialog.FileName = Path.GetFileName(current);
+                        }
+                        else
+                        {
+                            string directory = Path.GetDirectoryName(current);
+                            if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
+                            {
+                                dialog.InitialDirectory = directory;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore invalid paths
+                    }
+                }
+
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    txtPythonPath.Text = dialog.FileName;
                 }
             }
         }
@@ -806,6 +907,13 @@ namespace FastFileFinder
                 return;
             }
 
+            string pythonExecutable = txtPythonPath.Text.Trim();
+            if (!string.IsNullOrEmpty(pythonExecutable) && !File.Exists(pythonExecutable))
+            {
+                MessageBox.Show(this, "指定された Python 実行ファイルが見つかりません。", "FastFileFinder", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             string displayFolder;
             try
             {
@@ -844,7 +952,7 @@ namespace FastFileFinder
 
             var psi = new ProcessStartInfo
             {
-                FileName = "python",
+                FileName = string.IsNullOrEmpty(pythonExecutable) ? "python" : pythonExecutable,
                 Arguments = arguments,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -1329,6 +1437,8 @@ namespace FastFileFinder
             txtRoot.ReadOnly = !enabled;
             btnBrowse.Enabled = enabled;
             comboRecent.Enabled = enabled;
+            txtPythonPath.ReadOnly = !enabled;
+            btnBrowsePython.Enabled = enabled;
             txtQuery.ReadOnly = !enabled;
             chkRegex.Enabled = enabled;
             txtExtensions.ReadOnly = !enabled;
@@ -1454,6 +1564,135 @@ namespace FastFileFinder
             }
 
             return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        private sealed class ModernToolStripRenderer : ToolStripProfessionalRenderer
+        {
+            public enum ButtonStyle
+            {
+                Secondary,
+                Primary,
+            }
+
+            private readonly Color _secondaryNormal;
+            private readonly Color _secondaryHover;
+            private readonly Color _secondaryPressed;
+            private readonly Color _secondaryBorder;
+            private readonly Color _secondaryText;
+            private readonly Color _disabledBack;
+            private readonly Color _disabledText;
+            private readonly Color _primaryNormal;
+            private readonly Color _primaryHover;
+            private readonly Color _primaryPressed;
+            private readonly Color _primaryBorder;
+            private readonly Color _primaryText;
+
+            public ModernToolStripRenderer(
+                Color secondaryNormal,
+                Color secondaryHover,
+                Color secondaryPressed,
+                Color secondaryBorder,
+                Color secondaryText,
+                Color disabledBack,
+                Color disabledText,
+                Color primaryNormal,
+                Color primaryHover,
+                Color primaryPressed,
+                Color primaryBorder,
+                Color primaryText)
+                : base(new ProfessionalColorTable())
+            {
+                _secondaryNormal = secondaryNormal;
+                _secondaryHover = secondaryHover;
+                _secondaryPressed = secondaryPressed;
+                _secondaryBorder = secondaryBorder;
+                _secondaryText = secondaryText;
+                _disabledBack = disabledBack;
+                _disabledText = disabledText;
+                _primaryNormal = primaryNormal;
+                _primaryHover = primaryHover;
+                _primaryPressed = primaryPressed;
+                _primaryBorder = primaryBorder;
+                _primaryText = primaryText;
+            }
+
+            protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+            {
+                // Suppress default border rendering for a flatter appearance
+            }
+
+            protected override void OnRenderButtonBackground(ToolStripItemRenderEventArgs e)
+            {
+                var style = GetStyle(e.Item);
+                var bounds = new Rectangle(Point.Empty, e.Item.Size);
+
+                Color backColor;
+                Color borderColor;
+
+                if (!e.Item.Enabled)
+                {
+                    if (style == ButtonStyle.Primary)
+                    {
+                        backColor = ControlPaint.Light(_primaryNormal, 0.6f);
+                        borderColor = ControlPaint.Light(_primaryBorder, 0.6f);
+                    }
+                    else
+                    {
+                        backColor = _disabledBack;
+                        borderColor = _secondaryBorder;
+                    }
+                }
+                else if (e.Item.Pressed)
+                {
+                    backColor = style == ButtonStyle.Primary ? _primaryPressed : _secondaryPressed;
+                    borderColor = style == ButtonStyle.Primary ? _primaryBorder : _secondaryBorder;
+                }
+                else if (e.Item.Selected)
+                {
+                    backColor = style == ButtonStyle.Primary ? _primaryHover : _secondaryHover;
+                    borderColor = style == ButtonStyle.Primary ? _primaryBorder : _secondaryBorder;
+                }
+                else
+                {
+                    backColor = style == ButtonStyle.Primary ? _primaryNormal : _secondaryNormal;
+                    borderColor = style == ButtonStyle.Primary ? _primaryBorder : _secondaryBorder;
+                }
+
+                using (var brush = new SolidBrush(backColor))
+                {
+                    e.Graphics.FillRectangle(brush, bounds);
+                }
+
+                using (var pen = new Pen(borderColor))
+                {
+                    var rect = new Rectangle(bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+                    e.Graphics.DrawRectangle(pen, rect);
+                }
+            }
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+            {
+                var style = GetStyle(e.Item);
+                if (!e.Item.Enabled)
+                {
+                    e.TextColor = _disabledText;
+                }
+                else if (style == ButtonStyle.Primary)
+                {
+                    e.TextColor = _primaryText;
+                }
+                else
+                {
+                    e.TextColor = _secondaryText;
+                }
+
+                base.OnRenderItemText(e);
+            }
+
+            private static ButtonStyle GetStyle(ToolStripItem item)
+            {
+                return item.Tag is ButtonStyle style ? style : ButtonStyle.Secondary;
+            }
         }
 
         private sealed class SearchResult
