@@ -5,6 +5,8 @@ import argparse
 import os
 import platform
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -12,7 +14,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import TextIOWrapper
 from zipfile import BadZipFile, ZipFile
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 # Optional dependencies
 try:  # python-docx for .docx
@@ -71,6 +73,12 @@ try:
 except Exception:
     pass
 
+try:
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+except Exception:
+    pass
+
 stdout_lock = threading.Lock()
 word_diag_lock = threading.Lock()
 warned = set()
@@ -121,11 +129,27 @@ def _summarize_open_args(args: Optional[dict]) -> str:
     return ", args=" + ", ".join(parts)
 
 
-def log_doc_warning(path: str, error: Exception, last_args: Optional[dict] = None) -> None:
-    message = (
-        f"⚠ .doc をテキストへ変換できませんでした: {path} "
-        f"({error}{_format_hresult(error)}{_summarize_open_args(last_args)})"
-    )
+class DocConversionError(Exception):
+    def __init__(self, stage: str, detail: Optional[str] = None):
+        super().__init__(detail or stage)
+        self.stage = stage
+        self.detail = detail or ""
+
+
+def _clean_detail(detail: Optional[str]) -> Optional[str]:
+    if not detail:
+        return None
+    cleaned = " ".join(str(detail).split())
+    if len(cleaned) > 500:
+        cleaned = cleaned[:497] + "..."
+    return cleaned
+
+
+def _log_doc_error(stage: str, path: str, detail: Optional[str] = None) -> None:
+    detail = _clean_detail(detail)
+    message = f"ERR .doc convert failed [{stage}]: {path}"
+    if detail:
+        message += f" ({detail})"
     sys.stderr.write(message + "\n")
     sys.stderr.flush()
 
@@ -441,7 +465,7 @@ def _try_open_document(word, candidates: List[str]) -> Tuple[Optional[object], O
     return None, last_args, last_error
 
 
-def _warn_word_launch_failure(exc: Exception) -> None:
+def _describe_word_launch_failure(exc: Exception) -> str:
     reason = "Word を起動できません。Word がインストールされていない、または Office と Python のビット数 (32/64) が一致していない可能性があります。"
     text = _error_text(exc).lower()
     hresult = getattr(exc, "hresult", None)
@@ -449,16 +473,15 @@ def _warn_word_launch_failure(exc: Exception) -> None:
         reason = "Word がインストールされていないか、Office と Python のビット数 (32/64) が一致していません。"
     elif "server execution failed" in text or hresult in {-2146959355}:
         reason = "Word の COM 自動化を開始できません。Office と Python のビット数 (32/64) を確認してください。"
-    warn_once("word_launch", f"{reason} ({exc}{_format_hresult(exc)})")
+    return reason
 
 
-def extract_doc_text(path: str) -> List[str]:
+def _convert_doc_via_com(path: str) -> List[str]:
     if pythoncom is None or win32com is None:
-        warn_once(
-            "doc",
-            "pywin32 がインストールされていないため .doc をスキップします (必要に応じて 'python -m pywin32_postinstall -install' を実行してください)",
+        raise DocConversionError(
+            "COM-missing",
+            "pywin32 がインストールされていないため Word COM を利用できません (必要に応じて 'python -m pywin32_postinstall -install' を実行してください)",
         )
-        return []
 
     original_path = path
     temp_path: Optional[str] = None
@@ -473,8 +496,9 @@ def extract_doc_text(path: str) -> List[str]:
         try:
             word = win32com.client.gencache.EnsureDispatch("Word.Application")
         except Exception as exc:  # pragma: no cover - depends on Word availability
-            _warn_word_launch_failure(exc)
-            return []
+            reason = _describe_word_launch_failure(exc)
+            detail = f"{reason} ({_error_text(exc)}{_format_hresult(exc)})"
+            raise DocConversionError("COM-launch", detail)
 
         try:
             word.Visible = False
@@ -483,16 +507,13 @@ def extract_doc_text(path: str) -> List[str]:
         try:
             word.DisplayAlerts = 0
         except Exception as exc:
-            warn_once("word_alerts", f"Word.DisplayAlerts を設定できません: {exc}{_format_hresult(exc)}")
+            warn_once("word_alerts", f"Word.DisplayAlerts を設定できません: {_error_text(exc)}{_format_hresult(exc)}")
         else:
             try:
                 _ = word.DisplayAlerts
             except Exception as exc:
                 if _looks_like_eula_block(exc):
-                    warn_once(
-                        "word_eula",
-                        "Word の初回起動ダイアログ (EULA) が表示されている可能性があります。Word を手動で起動し、ライセンスに同意してください。",
-                    )
+                    warn_once("word_eula", "Word の初回起動ダイアログ (EULA) が表示されている可能性があります。Word を手動で起動し、ライセンスに同意してください。")
 
         try:
             constants = getattr(win32com.client, "constants", None)
@@ -526,8 +547,11 @@ def extract_doc_text(path: str) -> List[str]:
 
         doc, last_open_args, open_error = _try_open_document(word, candidates)
         if doc is None:
-            log_doc_warning(original_path, open_error or RuntimeError("Word.Documents.Open failed"), last_open_args)
-            return []
+            detail = "Open failed"
+            if open_error is not None:
+                detail = f"Open failed: {_error_text(open_error)}{_format_hresult(open_error)}"
+            detail += _summarize_open_args(last_open_args)
+            raise DocConversionError("COM-open", detail)
 
         fd, temp_raw = tempfile.mkstemp(suffix=".txt")
         os.close(fd)
@@ -546,8 +570,8 @@ def extract_doc_text(path: str) -> List[str]:
                 else:
                     doc.SaveAs(save_target, WD_FORMAT_UNICODE_TEXT)
             except Exception as exc:
-                log_doc_warning(original_path, exc, last_open_args)
-                return []
+                detail = f"Save failed: {_error_text(exc)}{_format_hresult(exc)}"
+                raise DocConversionError("COM-save", detail)
         finally:
             try:
                 doc.Close(False)
@@ -559,11 +583,13 @@ def extract_doc_text(path: str) -> List[str]:
             with open(temp_path, "r", encoding="utf-16", errors="replace") as reader:
                 return reader.read().splitlines()
         except Exception as exc:
-            log_doc_warning(original_path, exc, last_open_args)
-            return []
+            detail = f"Read failed: {_error_text(exc)}{_format_hresult(exc)}"
+            raise DocConversionError("COM-read", detail)
+    except DocConversionError:
+        raise
     except Exception as exc:
-        log_doc_warning(original_path, exc, last_open_args)
-        return []
+        detail = f"Unexpected failure: {_error_text(exc)}{_format_hresult(exc)}"
+        raise DocConversionError("COM", detail)
     finally:
         if doc is not None:
             try:
@@ -590,13 +616,145 @@ def extract_doc_text(path: str) -> List[str]:
                 pass
 
 
-def scan_doc_legacy(path: str, matcher, perfile: int) -> int:
-    lines = extract_doc_text(path)
-    if not lines:
-        return 0
+def _find_soffice_executable() -> Optional[str]:
+    candidates = ["soffice", "soffice.exe"]
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return None
 
+
+def _locate_converted_txt(temp_dir: str, source_path: str) -> Optional[str]:
+    expected = os.path.join(temp_dir, os.path.splitext(os.path.basename(source_path))[0] + ".txt")
+    if os.path.exists(expected):
+        return expected
+    try:
+        for name in os.listdir(temp_dir):
+            if name.lower().endswith(".txt"):
+                candidate = os.path.join(temp_dir, name)
+                if os.path.isfile(candidate):
+                    return candidate
+    except Exception:
+        return None
+    return None
+
+
+def _convert_doc_via_soffice(path: str) -> List[str]:
+    soffice = _find_soffice_executable()
+    if not soffice:
+        raise DocConversionError("soffice-not-found", "soffice.exe が見つからないため LibreOffice 変換を利用できません")
+
+    temp_dir = tempfile.mkdtemp(prefix="fff_soffice_")
+    try:
+        command = [
+            soffice,
+            "--headless",
+            "--convert-to",
+            "txt:Text",
+            "--outdir",
+            temp_dir,
+            os.path.abspath(path),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError as exc:
+            detail = f"Launch failed: {_error_text(exc)}"
+            raise DocConversionError("soffice-launch", detail)
+        except Exception as exc:
+            detail = f"Execution failed: {_error_text(exc)}"
+            raise DocConversionError("soffice-run", detail)
+        if completed.returncode != 0:
+            message = completed.stderr.strip() or completed.stdout.strip()
+            detail = f"stderr={message}" if message else None
+            raise DocConversionError(f"soffice-exit={completed.returncode}", detail)
+
+        output_path = _locate_converted_txt(temp_dir, path)
+        if not output_path:
+            raise DocConversionError("soffice-output-missing", "LibreOffice が txt を生成しませんでした")
+
+        try:
+            with open(output_path, "r", encoding="utf-8", errors="replace") as reader:
+                return reader.read().splitlines()
+        except Exception as exc:
+            detail = f"Read failed: {_error_text(exc)}{_format_hresult(exc)}"
+            raise DocConversionError("soffice-read", detail)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _find_antiword_executable() -> Optional[str]:
+    candidates = ["antiword", "antiword.exe"]
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return None
+
+
+def _convert_doc_via_antiword(path: str) -> List[str]:
+    antiword = _find_antiword_executable()
+    if not antiword:
+        raise DocConversionError("antiword-not-found", "antiword が PATH 上に見つかりません")
+
+    commands = [
+        [antiword, "-m", "UTF-8.txt", os.path.abspath(path)],
+        [antiword, os.path.abspath(path)],
+    ]
+    last_failure: Optional[subprocess.CompletedProcess] = None
+    for command in commands:
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError as exc:
+            detail = f"Launch failed: {_error_text(exc)}"
+            raise DocConversionError("antiword-launch", detail)
+        except Exception as exc:
+            detail = f"Execution failed: {_error_text(exc)}"
+            raise DocConversionError("antiword-run", detail)
+        if completed.returncode == 0:
+            output = completed.stdout or ""
+            return output.replace("\r\n", "\n").splitlines()
+        last_failure = completed
+
+    if last_failure is not None:
+        message = last_failure.stderr.strip() or last_failure.stdout.strip()
+        detail = f"stderr={message}" if message else None
+        raise DocConversionError(f"antiword-exit={last_failure.returncode}", detail)
+
+    raise DocConversionError("antiword", "antiword での変換に失敗しました")
+
+
+def iter_doc_legacy_lines(path: str) -> Iterable[str]:
+    converters = [_convert_doc_via_com, _convert_doc_via_soffice, _convert_doc_via_antiword]
+    for converter in converters:
+        try:
+            lines = converter(path)
+        except DocConversionError as exc:
+            _log_doc_error(exc.stage, path, exc.detail)
+            continue
+
+        for line in lines:
+            yield line
+        return
+
+
+def scan_doc_legacy(path: str, matcher, perfile: int) -> int:
     hits = 0
-    for lineno, line in enumerate(lines, 1):
+    for lineno, line in enumerate(iter_doc_legacy_lines(path), 1):
         if matcher(line):
             emit_tsv(path, "doc", lineno, line)
             hits += 1

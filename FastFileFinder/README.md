@@ -13,6 +13,7 @@ FastFileFinder は Python 製スキャナ `fastfilefinder_scan.py` を WinForms 
 - **常時キャンセル可能**: [Esc] または「キャンセル」で即座に Python プロセスを停止。標準入出力を閉じてから Kill するため、リソースリークを防ぎます。
 - **リッチな結果ビュー**:
   - DataGridView VirtualMode + クライアント側ソート／フィルタ。
+  - 拡張子列 (Ext) を追加し、Path/Ext/Entry/Line/Snippet で並べ替え可能。
   - ダブルクリックで `explorer.exe /select`、右クリックでフルパスコピー／親フォルダを開く。
   - Ctrl+C で選択行を TSV 形式コピー。
 - **詳細な進捗表示**: 経過時間、処理済み／対象ファイル数、ヒット件数、処理中パスをステータスバーに表示。
@@ -24,7 +25,9 @@ FastFileFinder は Python 製スキャナ `fastfilefinder_scan.py` を WinForms 
 | Python 3.8+ | 必須 |  | `python` コマンドから呼び出されます |
 | `python-docx` | 任意 | 最新 | `.docx` の本文検索に使用 |
 | `openpyxl` | 任意 | 最新 | `.xlsx` のセル検索に使用 |
-| `pywin32` | 任意 | 最新 | Microsoft Word COM を利用して `.doc` (旧形式) をテキスト化。Word 未インストール環境では自動スキップ |
+| `pywin32` | 任意 | 最新 | Microsoft Word COM を利用して `.doc` (旧形式) をテキスト化。Word 未インストールまたは Office と Python のビット数 (32/64) が一致しない場合は自動スキップ |
+| LibreOffice (`soffice`) | 任意 | 7.x 以降 | `.doc` 変換のフォールバック。Word COM が利用できない環境でもテキスト化を試みます |
+| `antiword` | 任意 | 最新 | LibreOffice も利用できない場合の最終フォールバック |
 | `xlrd` | 任意 | 1.2.x | `.xls` (旧形式) のセル検索に使用。2.x 系では `.xls` 非対応のため 1.2 系を利用してください |
 
 インストール例:
@@ -81,6 +84,16 @@ python fastfilefinder_scan.py --folder <dir> --query <text>
 - ネットワークパスや長いパスは自動的に `\\?\` プレフィックスへ変換されるため、Windows のパス長制限を超えていても検索できます。
 - 正規表現ハイライトは先頭マッチのみ、文字列検索では全マッチを強調します。
 - `.doc` / `.xls` の検索は純粋なテキストベース変換のため、複雑なレイアウトや埋め込みオブジェクトは検索対象外となります。
+
+### 旧形式 Word (.doc) の変換フロー
+
+`.doc` は次の優先順位でテキスト化を試行します。どれかが成功した時点で後続のフォールバックは実行されません。
+
+1. **Microsoft Word COM (pywin32)** — Word がインストールされていて Python とビット数 (32/64) が一致している場合。
+2. **LibreOffice (`soffice --headless`)** — Word COM が利用できない、または失敗したときに自動的に呼び出します。
+3. **antiword** — 上記がすべて失敗した場合の最終フォールバック。
+
+すべての経路で失敗した場合でもツールは継続し、標準エラー出力に 1 行のメッセージを残します。例: `ERR .doc convert failed [soffice-not-found]: C:\docs\sample.doc`。`pywin32` が未インストールの場合も同様に `ERR .doc convert failed [COM-missing]: ...` が出力されます。
 
 ## ライセンス
 
