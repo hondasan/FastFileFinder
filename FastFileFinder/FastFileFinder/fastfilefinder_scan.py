@@ -54,6 +54,14 @@ except Exception:  # pragma: no cover - dependency may be missing
     win32com = None  # type: ignore
     pywintypes = None  # type: ignore
 
+try:  # pypdf / PyPDF2 for PDF text extraction
+    from pypdf import PdfReader  # type: ignore
+except Exception:  # pragma: no cover - dependency may be missing
+    try:
+        from PyPDF2 import PdfReader  # type: ignore
+    except Exception:  # pragma: no cover - dependency may be missing
+        PdfReader = None  # type: ignore
+
 # Required optional packages: python-docx, openpyxl, "xlrd<2.0", pywin32
 
 
@@ -301,19 +309,31 @@ def should_target(path: str, exts: set) -> bool:
     return normalize_ext(os.path.splitext(path)[1]) in exts
 
 
-def build_matcher(pattern: str, use_regex: bool):
+def build_matcher(patterns: List[str], use_regex: bool, logic: str):
+    active = [p for p in patterns if p]
+    if not active:
+        raise ValueError("at least one pattern is required")
+
+    logic = (logic or "and").lower()
+    require_all = logic == "and"
+
     if use_regex:
-        rx = re.compile(pattern, re.IGNORECASE)
+        regexes = [re.compile(p, re.IGNORECASE) for p in active]
 
         def matcher(line: str):
-            return rx.search(line)
+            if not regexes:
+                return False
+            results = (rx.search(line) is not None for rx in regexes)
+            return all(results) if require_all else any(results)
 
         return matcher
 
-    lowered = pattern.lower()
+    lowered = [p.lower() for p in active]
 
     def matcher(line: str):
-        return lowered in line.lower()
+        haystack = line.lower()
+        checks = (needle in haystack for needle in lowered)
+        return all(checks) if require_all else any(checks)
 
     return matcher
 
@@ -369,6 +389,40 @@ def scan_zip(path: str, matcher, exts: set, perfile: int) -> int:
         pass
     except Exception as exc:
         warn_once(f"zip:{path}", f"ZIP 読み取り失敗: {path} ({exc})")
+    return hits
+
+
+def scan_pdf(path: str, matcher, perfile: int) -> int:
+    if PdfReader is None:
+        warn_once("pdf:missing", "PDF のテキスト抽出には pypdf または PyPDF2 が必要です")
+        return 0
+
+    try:
+        reader = PdfReader(path)
+    except Exception as exc:
+        sys.stderr.write(f"PDFを開けませんでした: {path} ({exc})\n")
+        sys.stderr.flush()
+        return 0
+
+    hits = 0
+    pages = getattr(reader, "pages", []) or []
+    for page_index, page in enumerate(pages, 1):
+        try:
+            text = page.extract_text() or ""
+        except Exception as exc:
+            sys.stderr.write(
+                f"PDFテキスト抽出に失敗しました: {path} (page {page_index}, {exc})\n"
+            )
+            sys.stderr.flush()
+            continue
+
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if matcher(line):
+                emit_tsv(path, f"page {page_index}", lineno, line)
+                hits += 1
+                if perfile and hits >= perfile:
+                    return hits
+
     return hits
 
 
@@ -1094,6 +1148,8 @@ def scan_file(path: str, matcher, args, exts: set) -> int:
         return 0
     if not should_target(path, exts):
         return 0
+    if ext == "pdf":
+        return scan_pdf(path, matcher, perfile)
     if ext == "docx" and args.word:
         return scan_docx(path, matcher, perfile)
     if ext == "xlsx" and args.excel:
@@ -1109,6 +1165,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--folder", required=True)
     ap.add_argument("--query", required=True)
+    ap.add_argument("--query2", default="")
+    ap.add_argument("--logic", choices=["and", "or"], default="and")
     ap.add_argument("--regex", action="store_true")
     ap.add_argument("--zip", action="store_true")
     ap.add_argument("--recursive", action="store_true")
@@ -1160,10 +1218,18 @@ def main() -> None:
         if e.strip()
     )
 
+    patterns = [args.query]
+    if args.query2:
+        patterns.append(args.query2)
+
     try:
-        matcher = build_matcher(args.query, args.regex)
+        matcher = build_matcher(patterns, args.regex, args.logic)
     except re.error as exc:
         sys.stderr.write(f"正規表現エラー: {exc}\n")
+        sys.stderr.flush()
+        return
+    except ValueError:
+        sys.stderr.write("検索キーワードが指定されていません\n")
         sys.stderr.flush()
         return
 
