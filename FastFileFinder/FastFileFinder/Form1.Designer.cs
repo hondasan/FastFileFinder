@@ -41,6 +41,10 @@ namespace FastFileFinder
             this.txtRoot = new System.Windows.Forms.TextBox();
             this.btnBrowse = new System.Windows.Forms.Button();
             this.comboRecent = new System.Windows.Forms.ComboBox();
+            this.labelPythonPath = new System.Windows.Forms.Label();
+            this.flowPythonPath = new System.Windows.Forms.FlowLayoutPanel();
+            this.txtPythonPath = new System.Windows.Forms.TextBox();
+            this.btnBrowsePython = new System.Windows.Forms.Button();
             this.labelQuery = new System.Windows.Forms.Label();
             this.flowQuery = new System.Windows.Forms.FlowLayoutPanel();
             this.txtQuery = new System.Windows.Forms.TextBox();
@@ -85,6 +89,7 @@ namespace FastFileFinder
             this.panelConditions.SuspendLayout();
             this.tableConditions.SuspendLayout();
             this.flowRoot.SuspendLayout();
+            this.flowPythonPath.SuspendLayout();
             this.flowQuery.SuspendLayout();
             this.flowParallel.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.numParallel)).BeginInit();
@@ -115,10 +120,11 @@ namespace FastFileFinder
             // toolStripButtonStart
             // 
             this.toolStripButtonStart.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+            this.toolStripButtonStart.Image = null;
             this.toolStripButtonStart.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.toolStripButtonStart.Name = "toolStripButtonStart";
-            this.toolStripButtonStart.Padding = new System.Windows.Forms.Padding(6, 0, 6, 0);
-            this.toolStripButtonStart.Size = new System.Drawing.Size(70, 36);
+            this.toolStripButtonStart.Padding = new System.Windows.Forms.Padding(12, 0, 12, 0);
+            this.toolStripButtonStart.Size = new System.Drawing.Size(82, 36);
             this.toolStripButtonStart.Text = "検索開始";
             this.toolStripButtonStart.Click += new System.EventHandler(this.ToolStripButtonStart_Click);
             // 
@@ -126,24 +132,26 @@ namespace FastFileFinder
             // 
             this.toolStripButtonCancel.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
             this.toolStripButtonCancel.Enabled = false;
+            this.toolStripButtonCancel.Image = null;
             this.toolStripButtonCancel.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.toolStripButtonCancel.Name = "toolStripButtonCancel";
-            this.toolStripButtonCancel.Padding = new System.Windows.Forms.Padding(6, 0, 6, 0);
-            this.toolStripButtonCancel.Size = new System.Drawing.Size(70, 36);
+            this.toolStripButtonCancel.Padding = new System.Windows.Forms.Padding(12, 0, 12, 0);
+            this.toolStripButtonCancel.Size = new System.Drawing.Size(82, 36);
             this.toolStripButtonCancel.Text = "キャンセル";
             this.toolStripButtonCancel.Click += new System.EventHandler(this.ToolStripButtonCancel_Click);
             // 
             // toolStripButtonExport
             // 
             this.toolStripButtonExport.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+            this.toolStripButtonExport.Image = null;
             this.toolStripButtonExport.Name = "toolStripButtonExport";
-            this.toolStripButtonExport.Padding = new System.Windows.Forms.Padding(6, 0, 6, 0);
-            this.toolStripButtonExport.Size = new System.Drawing.Size(73, 36);
+            this.toolStripButtonExport.Padding = new System.Windows.Forms.Padding(12, 0, 12, 0);
+            this.toolStripButtonExport.Size = new System.Drawing.Size(94, 36);
             this.toolStripButtonExport.Text = "CSV 出力";
             this.toolStripButtonExport.Click += new System.EventHandler(this.ToolStripButtonExport_Click);
             // 
             // panelConditions
-            // 
+            //
             this.panelConditions.AutoSize = true;
             this.panelConditions.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.panelConditions.BackColor = System.Drawing.Color.White;
@@ -152,35 +160,37 @@ namespace FastFileFinder
             this.panelConditions.Location = new System.Drawing.Point(0, 48);
             this.panelConditions.Name = "panelConditions";
             this.panelConditions.Padding = new System.Windows.Forms.Padding(12, 8, 12, 8);
-            this.panelConditions.Size = new System.Drawing.Size(1180, 292);
+            this.panelConditions.Size = new System.Drawing.Size(1180, 324);
             this.panelConditions.TabIndex = 1;
-            // 
+            //
             // tableConditions
-            // 
+            //
             this.tableConditions.AutoSize = true;
             this.tableConditions.ColumnCount = 2;
             this.tableConditions.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 150F));
             this.tableConditions.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableConditions.Controls.Add(this.labelRoot, 0, 0);
             this.tableConditions.Controls.Add(this.flowRoot, 1, 0);
-            this.tableConditions.Controls.Add(this.labelQuery, 0, 1);
-            this.tableConditions.Controls.Add(this.flowQuery, 1, 1);
-            this.tableConditions.Controls.Add(this.labelExtensions, 0, 2);
-            this.tableConditions.Controls.Add(this.txtExtensions, 1, 2);
-            this.tableConditions.Controls.Add(this.labelExclude, 0, 3);
-            this.tableConditions.Controls.Add(this.txtExclude, 1, 3);
-            this.tableConditions.Controls.Add(this.labelParallel, 0, 4);
-            this.tableConditions.Controls.Add(this.flowParallel, 1, 4);
-            this.tableConditions.Controls.Add(this.labelOffice, 0, 5);
-            this.tableConditions.Controls.Add(this.flowOffice, 1, 5);
-            this.tableConditions.Controls.Add(this.labelQuickFilter, 0, 6);
-            this.tableConditions.Controls.Add(this.txtQuickFilter, 1, 6);
-            this.tableConditions.Controls.Add(this.labelOptions, 0, 7);
-            this.tableConditions.Controls.Add(this.flowOptions, 1, 7);
+            this.tableConditions.Controls.Add(this.labelPythonPath, 0, 1);
+            this.tableConditions.Controls.Add(this.flowPythonPath, 1, 1);
+            this.tableConditions.Controls.Add(this.labelQuery, 0, 2);
+            this.tableConditions.Controls.Add(this.flowQuery, 1, 2);
+            this.tableConditions.Controls.Add(this.labelExtensions, 0, 3);
+            this.tableConditions.Controls.Add(this.txtExtensions, 1, 3);
+            this.tableConditions.Controls.Add(this.labelExclude, 0, 4);
+            this.tableConditions.Controls.Add(this.txtExclude, 1, 4);
+            this.tableConditions.Controls.Add(this.labelParallel, 0, 5);
+            this.tableConditions.Controls.Add(this.flowParallel, 1, 5);
+            this.tableConditions.Controls.Add(this.labelOffice, 0, 6);
+            this.tableConditions.Controls.Add(this.flowOffice, 1, 6);
+            this.tableConditions.Controls.Add(this.labelQuickFilter, 0, 7);
+            this.tableConditions.Controls.Add(this.txtQuickFilter, 1, 7);
+            this.tableConditions.Controls.Add(this.labelOptions, 0, 8);
+            this.tableConditions.Controls.Add(this.flowOptions, 1, 8);
             this.tableConditions.Dock = System.Windows.Forms.DockStyle.Top;
             this.tableConditions.Location = new System.Drawing.Point(12, 8);
             this.tableConditions.Name = "tableConditions";
-            this.tableConditions.RowCount = 8;
+            this.tableConditions.RowCount = 9;
             this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
             this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
             this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
@@ -189,7 +199,8 @@ namespace FastFileFinder
             this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
             this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
             this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableConditions.Size = new System.Drawing.Size(1156, 276);
+            this.tableConditions.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tableConditions.Size = new System.Drawing.Size(1156, 308);
             this.tableConditions.TabIndex = 0;
             // 
             // labelRoot
@@ -228,16 +239,22 @@ namespace FastFileFinder
             this.txtRoot.TabIndex = 0;
             // 
             // btnBrowse
-            // 
+            //
             this.btnBrowse.AutoSize = true;
-            this.btnBrowse.FlatStyle = System.Windows.Forms.FlatStyle.System;
+            this.btnBrowse.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(245)))), ((int)(((byte)(246)))), ((int)(((byte)(248)))));
+            this.btnBrowse.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(197)))), ((int)(((byte)(202)))), ((int)(((byte)(215)))));
+            this.btnBrowse.FlatAppearance.BorderSize = 1;
+            this.btnBrowse.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(227)))), ((int)(((byte)(239)))));
+            this.btnBrowse.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(233)))), ((int)(((byte)(237)))), ((int)(((byte)(245)))));
+            this.btnBrowse.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.btnBrowse.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(34)))), ((int)(((byte)(34)))), ((int)(((byte)(34)))));
             this.btnBrowse.Location = new System.Drawing.Point(428, 0);
             this.btnBrowse.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
             this.btnBrowse.Name = "btnBrowse";
-            this.btnBrowse.Size = new System.Drawing.Size(52, 26);
+            this.btnBrowse.Padding = new System.Windows.Forms.Padding(12, 8, 12, 8);
             this.btnBrowse.TabIndex = 1;
-            this.btnBrowse.Text = "参照";
-            this.btnBrowse.UseVisualStyleBackColor = true;
+            this.btnBrowse.Text = "参照...";
+            this.btnBrowse.UseVisualStyleBackColor = false;
             this.btnBrowse.Click += new System.EventHandler(this.BtnBrowse_Click);
             // 
             // comboRecent
@@ -250,16 +267,67 @@ namespace FastFileFinder
             this.comboRecent.Size = new System.Drawing.Size(260, 23);
             this.comboRecent.TabIndex = 2;
             this.comboRecent.SelectedIndexChanged += new System.EventHandler(this.ComboRecent_SelectedIndexChanged);
-            // 
+            //
+            // labelPythonPath
+            //
+            this.labelPythonPath.AutoSize = true;
+            this.labelPythonPath.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.labelPythonPath.Location = new System.Drawing.Point(3, 32);
+            this.labelPythonPath.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
+            this.labelPythonPath.Name = "labelPythonPath";
+            this.labelPythonPath.Size = new System.Drawing.Size(144, 32);
+            this.labelPythonPath.TabIndex = 2;
+            this.labelPythonPath.Text = "Python 実行ファイル";
+            this.labelPythonPath.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            //
+            // flowPythonPath
+            //
+            this.flowPythonPath.AutoSize = true;
+            this.flowPythonPath.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.flowPythonPath.Controls.Add(this.txtPythonPath);
+            this.flowPythonPath.Controls.Add(this.btnBrowsePython);
+            this.flowPythonPath.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.flowPythonPath.Location = new System.Drawing.Point(153, 35);
+            this.flowPythonPath.Name = "flowPythonPath";
+            this.flowPythonPath.Size = new System.Drawing.Size(1000, 26);
+            this.flowPythonPath.TabIndex = 3;
+            this.flowPythonPath.WrapContents = false;
+            //
+            // txtPythonPath
+            //
+            this.txtPythonPath.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
+            this.txtPythonPath.Name = "txtPythonPath";
+            this.txtPythonPath.Size = new System.Drawing.Size(420, 23);
+            this.txtPythonPath.TabIndex = 0;
+            //
+            // btnBrowsePython
+            //
+            this.btnBrowsePython.AutoSize = true;
+            this.btnBrowsePython.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(245)))), ((int)(((byte)(246)))), ((int)(((byte)(248)))));
+            this.btnBrowsePython.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(197)))), ((int)(((byte)(202)))), ((int)(((byte)(215)))));
+            this.btnBrowsePython.FlatAppearance.BorderSize = 1;
+            this.btnBrowsePython.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(227)))), ((int)(((byte)(239)))));
+            this.btnBrowsePython.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(233)))), ((int)(((byte)(237)))), ((int)(((byte)(245)))));
+            this.btnBrowsePython.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.btnBrowsePython.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(34)))), ((int)(((byte)(34)))), ((int)(((byte)(34)))));
+            this.btnBrowsePython.Location = new System.Drawing.Point(428, 0);
+            this.btnBrowsePython.Margin = new System.Windows.Forms.Padding(0, 0, 8, 0);
+            this.btnBrowsePython.Name = "btnBrowsePython";
+            this.btnBrowsePython.Padding = new System.Windows.Forms.Padding(12, 8, 12, 8);
+            this.btnBrowsePython.TabIndex = 1;
+            this.btnBrowsePython.Text = "参照...";
+            this.btnBrowsePython.UseVisualStyleBackColor = false;
+            this.btnBrowsePython.Click += new System.EventHandler(this.BtnBrowsePython_Click);
+            //
             // labelQuery
-            // 
+            //
             this.labelQuery.AutoSize = true;
             this.labelQuery.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelQuery.Location = new System.Drawing.Point(3, 32);
+            this.labelQuery.Location = new System.Drawing.Point(3, 64);
             this.labelQuery.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelQuery.Name = "labelQuery";
             this.labelQuery.Size = new System.Drawing.Size(144, 32);
-            this.labelQuery.TabIndex = 2;
+            this.labelQuery.TabIndex = 4;
             this.labelQuery.Text = "内容フィルタ";
             this.labelQuery.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
@@ -270,10 +338,10 @@ namespace FastFileFinder
             this.flowQuery.Controls.Add(this.txtQuery);
             this.flowQuery.Controls.Add(this.chkRegex);
             this.flowQuery.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.flowQuery.Location = new System.Drawing.Point(153, 35);
+            this.flowQuery.Location = new System.Drawing.Point(153, 67);
             this.flowQuery.Name = "flowQuery";
             this.flowQuery.Size = new System.Drawing.Size(1000, 26);
-            this.flowQuery.TabIndex = 3;
+            this.flowQuery.TabIndex = 5;
             this.flowQuery.WrapContents = false;
             // 
             // txtQuery
@@ -298,18 +366,18 @@ namespace FastFileFinder
             // 
             this.labelExtensions.AutoSize = true;
             this.labelExtensions.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelExtensions.Location = new System.Drawing.Point(3, 64);
+            this.labelExtensions.Location = new System.Drawing.Point(3, 96);
             this.labelExtensions.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelExtensions.Name = "labelExtensions";
             this.labelExtensions.Size = new System.Drawing.Size(144, 32);
-            this.labelExtensions.TabIndex = 4;
+            this.labelExtensions.TabIndex = 6;
             this.labelExtensions.Text = "対象拡張子";
             this.labelExtensions.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // txtExtensions
             // 
             this.txtExtensions.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.txtExtensions.Location = new System.Drawing.Point(153, 67);
+            this.txtExtensions.Location = new System.Drawing.Point(153, 99);
             this.txtExtensions.Name = "txtExtensions";
             this.txtExtensions.Size = new System.Drawing.Size(1000, 23);
             this.txtExtensions.TabIndex = 5;
@@ -318,18 +386,18 @@ namespace FastFileFinder
             // 
             this.labelExclude.AutoSize = true;
             this.labelExclude.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelExclude.Location = new System.Drawing.Point(3, 96);
+            this.labelExclude.Location = new System.Drawing.Point(3, 128);
             this.labelExclude.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelExclude.Name = "labelExclude";
             this.labelExclude.Size = new System.Drawing.Size(144, 32);
-            this.labelExclude.TabIndex = 6;
+            this.labelExclude.TabIndex = 8;
             this.labelExclude.Text = "除外フォルダ";
             this.labelExclude.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // txtExclude
             // 
             this.txtExclude.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.txtExclude.Location = new System.Drawing.Point(153, 99);
+            this.txtExclude.Location = new System.Drawing.Point(153, 131);
             this.txtExclude.Name = "txtExclude";
             this.txtExclude.Size = new System.Drawing.Size(1000, 23);
             this.txtExclude.TabIndex = 7;
@@ -338,11 +406,11 @@ namespace FastFileFinder
             // 
             this.labelParallel.AutoSize = true;
             this.labelParallel.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelParallel.Location = new System.Drawing.Point(3, 128);
+            this.labelParallel.Location = new System.Drawing.Point(3, 160);
             this.labelParallel.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelParallel.Name = "labelParallel";
             this.labelParallel.Size = new System.Drawing.Size(144, 32);
-            this.labelParallel.TabIndex = 8;
+            this.labelParallel.TabIndex = 10;
             this.labelParallel.Text = "並列度";
             this.labelParallel.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
@@ -353,10 +421,10 @@ namespace FastFileFinder
             this.flowParallel.Controls.Add(this.numParallel);
             this.flowParallel.Controls.Add(this.lblParallelHint);
             this.flowParallel.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.flowParallel.Location = new System.Drawing.Point(153, 131);
+            this.flowParallel.Location = new System.Drawing.Point(153, 163);
             this.flowParallel.Name = "flowParallel";
             this.flowParallel.Size = new System.Drawing.Size(1000, 26);
-            this.flowParallel.TabIndex = 9;
+            this.flowParallel.TabIndex = 11;
             this.flowParallel.WrapContents = false;
             // 
             // numParallel
@@ -385,11 +453,11 @@ namespace FastFileFinder
             // 
             this.labelOffice.AutoSize = true;
             this.labelOffice.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelOffice.Location = new System.Drawing.Point(3, 160);
+            this.labelOffice.Location = new System.Drawing.Point(3, 192);
             this.labelOffice.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelOffice.Name = "labelOffice";
             this.labelOffice.Size = new System.Drawing.Size(144, 32);
-            this.labelOffice.TabIndex = 10;
+            this.labelOffice.TabIndex = 12;
             this.labelOffice.Text = "Office 形式";
             this.labelOffice.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
@@ -401,10 +469,10 @@ namespace FastFileFinder
             this.flowOffice.Controls.Add(this.chkExcel);
             this.flowOffice.Controls.Add(this.chkLegacy);
             this.flowOffice.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.flowOffice.Location = new System.Drawing.Point(153, 163);
+            this.flowOffice.Location = new System.Drawing.Point(153, 195);
             this.flowOffice.Name = "flowOffice";
             this.flowOffice.Size = new System.Drawing.Size(1000, 26);
-            this.flowOffice.TabIndex = 11;
+            this.flowOffice.TabIndex = 13;
             this.flowOffice.WrapContents = false;
             // 
             // chkWord
@@ -448,18 +516,18 @@ namespace FastFileFinder
             // 
             this.labelQuickFilter.AutoSize = true;
             this.labelQuickFilter.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelQuickFilter.Location = new System.Drawing.Point(3, 192);
+            this.labelQuickFilter.Location = new System.Drawing.Point(3, 224);
             this.labelQuickFilter.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelQuickFilter.Name = "labelQuickFilter";
             this.labelQuickFilter.Size = new System.Drawing.Size(144, 32);
-            this.labelQuickFilter.TabIndex = 12;
+            this.labelQuickFilter.TabIndex = 14;
             this.labelQuickFilter.Text = "結果フィルタ";
             this.labelQuickFilter.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // txtQuickFilter
             // 
             this.txtQuickFilter.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.txtQuickFilter.Location = new System.Drawing.Point(153, 195);
+            this.txtQuickFilter.Location = new System.Drawing.Point(153, 227);
             this.txtQuickFilter.Name = "txtQuickFilter";
             this.txtQuickFilter.Size = new System.Drawing.Size(1000, 23);
             this.txtQuickFilter.TabIndex = 13;
@@ -469,11 +537,11 @@ namespace FastFileFinder
             // 
             this.labelOptions.AutoSize = true;
             this.labelOptions.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelOptions.Location = new System.Drawing.Point(3, 224);
+            this.labelOptions.Location = new System.Drawing.Point(3, 256);
             this.labelOptions.Margin = new System.Windows.Forms.Padding(3, 6, 3, 6);
             this.labelOptions.Name = "labelOptions";
             this.labelOptions.Size = new System.Drawing.Size(144, 48);
-            this.labelOptions.TabIndex = 14;
+            this.labelOptions.TabIndex = 16;
             this.labelOptions.Text = "その他";
             this.labelOptions.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
@@ -484,10 +552,10 @@ namespace FastFileFinder
             this.flowOptions.Controls.Add(this.chkRecursive);
             this.flowOptions.Controls.Add(this.chkZip);
             this.flowOptions.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.flowOptions.Location = new System.Drawing.Point(153, 227);
+            this.flowOptions.Location = new System.Drawing.Point(153, 259);
             this.flowOptions.Name = "flowOptions";
             this.flowOptions.Size = new System.Drawing.Size(1000, 42);
-            this.flowOptions.TabIndex = 15;
+            this.flowOptions.TabIndex = 17;
             this.flowOptions.WrapContents = false;
             // 
             // chkRecursive
@@ -702,6 +770,7 @@ namespace FastFileFinder
             this.KeyPreview = true;
             this.MinimumSize = new System.Drawing.Size(960, 600);
             this.Name = "Form1";
+            this.ShowIcon = false;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "FastFileFinder";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.Form1_FormClosing);
@@ -717,6 +786,8 @@ namespace FastFileFinder
             this.tableConditions.PerformLayout();
             this.flowRoot.ResumeLayout(false);
             this.flowRoot.PerformLayout();
+            this.flowPythonPath.ResumeLayout(false);
+            this.flowPythonPath.PerformLayout();
             this.flowQuery.ResumeLayout(false);
             this.flowQuery.PerformLayout();
             this.flowParallel.ResumeLayout(false);
@@ -748,6 +819,10 @@ namespace FastFileFinder
         private System.Windows.Forms.TextBox txtRoot;
         private System.Windows.Forms.Button btnBrowse;
         private System.Windows.Forms.ComboBox comboRecent;
+        private System.Windows.Forms.Label labelPythonPath;
+        private System.Windows.Forms.FlowLayoutPanel flowPythonPath;
+        private System.Windows.Forms.TextBox txtPythonPath;
+        private System.Windows.Forms.Button btnBrowsePython;
         private System.Windows.Forms.Label labelQuery;
         private System.Windows.Forms.FlowLayoutPanel flowQuery;
         private System.Windows.Forms.TextBox txtQuery;
