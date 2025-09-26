@@ -88,9 +88,12 @@ DOC_DIAG_CONTEXT = {
     "perfile": 0,
     "exts": "",
     "legacy_mode": "com",
+    "single_thread": False,
 }
 DOC_DIAG_LOCK = threading.Lock()
 DOC_DIAG_EMITTED = False
+
+DOC_WORKER_POOL: Optional["DocWorkerPool"] = None
 
 
 def ensure_extended_path(path: str) -> str:
@@ -174,25 +177,93 @@ def _format_com_exception(exc: Exception) -> str:
     hresult = getattr(exc, "hresult", None)
     if isinstance(hresult, int):
         value = hresult if hresult >= 0 else (hresult & 0xFFFFFFFF)
-        parts.append(f"HRESULT=0x{value:08X}")
+        parts.append(f"hresult=0x{value:08X}")
+    strerror = getattr(exc, "strerror", None)
+    if strerror:
+        parts.append(f"strerror={_clean_detail(strerror)}")
+    excepinfo = getattr(exc, "excepinfo", None)
+    if excepinfo:
+        try:
+            cleaned = ",".join(_clean_detail(part) or "" for part in excepinfo if part)
+        except Exception:
+            cleaned = None
+        if cleaned:
+            parts.append(f"excepinfo={cleaned}")
     text = _error_text(exc)
     if text:
-        parts.append(f"msg={text}")
+        parts.append(f"msg={_clean_detail(text)}")
     return ", ".join(parts)
+
+
+class DocWorkerPool:
+    def __init__(self, single_thread: bool):
+        self._single_thread = bool(single_thread)
+        max_workers = 1 if self._single_thread else max(1, min(4, (os.cpu_count() or 2)))
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="doc-worker",
+        )
+
+    def run(self, func, *args, **kwargs):
+        def _callable():
+            coinitialized = False
+            try:
+                if pythoncom is not None:
+                    try:
+                        pythoncom.CoInitialize()
+                    except Exception as exc:
+                        raise DocConversionError(
+                            "Init",
+                            _format_com_exception(exc) or str(exc),
+                        )
+                    coinitialized = True
+                return func(*args, **kwargs)
+            finally:
+                if coinitialized:
+                    try:
+                        pythoncom.CoUninitialize()
+                    except Exception as exc:
+                        warn_once(
+                            "coinitialize_cleanup",
+                            f"CoUninitialize で例外: {_error_text(exc)}{_format_hresult(exc)}",
+                        )
+
+        future = self._executor.submit(_callable)
+        return future.result()
+
+    def shutdown(self) -> None:
+        self._executor.shutdown(wait=True)
+
+    @property
+    def single_thread(self) -> bool:
+        return self._single_thread
+
+
+def configure_doc_workers(single_thread: bool) -> None:
+    global DOC_WORKER_POOL
+    if DOC_WORKER_POOL is not None:
+        DOC_WORKER_POOL.shutdown()
+    DOC_WORKER_POOL = DocWorkerPool(single_thread)
+
+
+def shutdown_doc_workers() -> None:
+    global DOC_WORKER_POOL
+    pool = DOC_WORKER_POOL
+    if pool is not None:
+        pool.shutdown()
+        DOC_WORKER_POOL = None
 
 
 def emit_tsv(path: str, entry: str, lineno: int, line: str) -> None:
     line = line.replace("\t", " ").rstrip("\r\n")
     with stdout_lock:
-        sys.stdout.write(f"{path}\t{entry}\t{lineno}\t{line}\n")
-        sys.stdout.flush()
+        print(f"{path}\t{entry}\t{lineno}\t{line}", flush=True)
 
 
 def emit_status(tag: str, *parts: object) -> None:
     payload = "\t".join(str(p) for p in parts)
     with stdout_lock:
-        sys.stdout.write(f"#{tag}\t{payload}\n")
-        sys.stdout.flush()
+        print(f"#{tag}\t{payload}", flush=True)
 
 
 def warn_once(kind: str, message: str) -> None:
@@ -385,7 +456,7 @@ DOC_SAVEAS_MAX_WAIT = 10.0
 WORD_DIAGNOSTICS_EMITTED = False
 
 
-def _emit_startup_diag() -> None:
+def _emit_startup_diag(perfile: int, exts_argument: str, legacy_mode: str, single_thread: bool) -> None:
     arch = platform.architecture()[0]
     if "64" in arch:
         py_bits = "64"
@@ -393,22 +464,6 @@ def _emit_startup_diag() -> None:
         py_bits = "32"
     else:
         py_bits = arch
-
-    cache_info = "unavailable"
-    if win32com is not None:
-        try:
-            cache_path = win32com.client.gencache.GetGeneratePath()
-        except Exception as exc:
-            cache_info = f"error:{_clean_detail(_error_text(exc)) or type(exc).__name__}"
-        else:
-            if cache_path:
-                try:
-                    os.makedirs(cache_path, exist_ok=True)
-                except Exception:
-                    pass
-                cache_info = cache_path
-            else:
-                cache_info = "unknown"
 
     word_detect = "NG"
     if pythoncom is not None and win32com is not None:
@@ -437,9 +492,12 @@ def _emit_startup_diag() -> None:
                 except Exception:
                     pass
 
+    exts_display = (exts_argument or "").strip() or "*"
+    legacy_display = (legacy_mode or "com").lower()
     message = (
         f"diag: py={py_bits}, word-detect={word_detect}, "
-        f"win32com-cache={cache_info}, python_exe={sys.executable}"
+        f"perfile={perfile}, exts={exts_display}, "
+        f"legacy-doc={legacy_display}, single-thread={bool(single_thread)}"
     )
     sys.stderr.write(message + "\n")
     sys.stderr.flush()
@@ -505,7 +563,13 @@ def _emit_word_diagnostics(word) -> None:
     sys.stderr.flush()
 
 
-def configure_doc_diag(enabled: bool, perfile: int, exts_argument: str, legacy_mode: str) -> None:
+def configure_doc_diag(
+    enabled: bool,
+    perfile: int,
+    exts_argument: str,
+    legacy_mode: str,
+    single_thread: bool,
+) -> None:
     global DOC_DIAG_CONTEXT, DOC_DIAG_EMITTED
     exts_display = (exts_argument or "").strip()
     if not exts_display:
@@ -515,6 +579,7 @@ def configure_doc_diag(enabled: bool, perfile: int, exts_argument: str, legacy_m
         "perfile": perfile,
         "exts": exts_display,
         "legacy_mode": (legacy_mode or "com").lower(),
+        "single_thread": bool(single_thread),
     }
     DOC_DIAG_EMITTED = not enabled
 
@@ -560,9 +625,11 @@ def _emit_doc_diag_if_needed(word) -> None:
     exts_display = DOC_DIAG_CONTEXT.get("exts", "*") or "*"
     legacy_mode = DOC_DIAG_CONTEXT.get("legacy_mode", "com")
 
+    single_thread = DOC_DIAG_CONTEXT.get("single_thread", False)
     diag = (
         f"diag: py={py_bits}, word={word_bits}, gencache={gencache_display}, "
-        f"perfile={perfile}, exts={exts_display}, legacy-doc-mode={legacy_mode}"
+        f"perfile={perfile}, exts={exts_display}, "
+        f"legacy-doc-mode={legacy_mode}, single-thread={bool(single_thread)}"
     )
     sys.stderr.write(diag + "\n")
     sys.stderr.flush()
@@ -646,16 +713,9 @@ def _convert_doc_via_com(path: str) -> List[str]:
     temp_path: Optional[str] = None
     word = None
     doc = None
-    coinitialized = False
     last_open_args: Optional[dict] = None
 
     try:
-        try:
-            pythoncom.CoInitialize()
-        except Exception as exc:
-            raise DocConversionError("Init", _format_com_exception(exc) or _error_text(exc))
-        coinitialized = True
-
         try:
             word = win32com.client.gencache.EnsureDispatch("Word.Application")
         except Exception as exc:  # pragma: no cover - depends on Word availability
@@ -665,8 +725,11 @@ def _convert_doc_via_com(path: str) -> List[str]:
 
         try:
             word.Visible = True
-        except Exception:
-            pass
+        except Exception as exc:
+            warn_once(
+                "word_visible",
+                f"Word.Visible を設定できません: {_error_text(exc)}{_format_hresult(exc)}",
+            )
         try:
             word.DisplayAlerts = 0
         except Exception as exc:
@@ -691,8 +754,11 @@ def _convert_doc_via_com(path: str) -> List[str]:
         except Exception:
             try:
                 word.AutomationSecurity = MSO_AUTOMATION_SECURITY_FORCE_DISABLE
-            except Exception:
-                pass
+            except Exception as exc:
+                warn_once(
+                    "word_autosec",
+                    f"Word.AutomationSecurity を設定できません: {_error_text(exc)}{_format_hresult(exc)}",
+                )
 
         _emit_word_diagnostics(word)
         _emit_doc_diag_if_needed(word)
@@ -746,10 +812,13 @@ def _convert_doc_via_com(path: str) -> List[str]:
                 raise DocConversionError("SaveAs", _format_com_exception(exc) or _error_text(exc))
 
             deadline = time.time() + DOC_SAVEAS_MAX_WAIT
+            file_size = 0
             while True:
                 try:
-                    if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                        break
+                    if temp_path and os.path.exists(temp_path):
+                        file_size = os.path.getsize(temp_path)
+                        if file_size > 0:
+                            break
                 except OSError:
                     pass
                 if time.time() >= deadline:
@@ -760,11 +829,11 @@ def _convert_doc_via_com(path: str) -> List[str]:
         finally:
             try:
                 doc.Close(False)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_doc_error("Close", path, _format_com_exception(exc) or _error_text(exc))
             doc = None
 
-        _log_doc_stage("Read", temp_path)
+        _log_doc_stage("Read", f"{temp_path} size={file_size}")
 
         lines: List[str] = []
         try:
@@ -783,26 +852,24 @@ def _convert_doc_via_com(path: str) -> List[str]:
         if doc is not None:
             try:
                 doc.Close(False)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_doc_error("Close", path, _format_com_exception(exc) or _error_text(exc))
         if word is not None:
             try:
                 word.Quit()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_doc_error("Quit", path, _format_com_exception(exc) or _error_text(exc))
         if temp_path:
             try:
                 os.remove(temp_path)
-            except Exception:
+            except Exception as exc:
                 try:
                     os.remove(ensure_extended_path(temp_path))
-                except Exception:
-                    pass
-        if coinitialized:
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
+                except Exception as fallback_exc:
+                    detail = _format_com_exception(fallback_exc) or _error_text(fallback_exc)
+                    if not detail:
+                        detail = _error_text(exc)
+                    _log_doc_error("Cleanup", temp_path, detail)
 
 
 def _find_soffice_executable() -> Optional[str]:
@@ -938,7 +1005,13 @@ def iter_doc_legacy_lines(path: str, mode: str) -> Iterable[str]:
 
     for converter in converters:
         try:
-            lines = converter(path)
+            if converter is _convert_doc_via_com:
+                global DOC_WORKER_POOL
+                if DOC_WORKER_POOL is None:
+                    configure_doc_workers(DOC_DIAG_CONTEXT.get("single_thread", False))
+                lines = DOC_WORKER_POOL.run(converter, path)
+            else:
+                lines = converter(path)
         except DocConversionError as exc:
             _log_doc_error(exc.stage, path, exc.detail)
             continue
@@ -959,7 +1032,7 @@ def scan_doc_legacy(path: str, matcher, perfile: int, legacy_mode: str) -> int:
             hits += 1
             if perfile and hits >= perfile:
                 break
-    _log_doc_stage("Emit", f"{path} ({hits} hits)")
+    _log_doc_stage("Emit", f"{path} hits={hits}")
     return hits
 
 
@@ -1045,17 +1118,35 @@ def main() -> None:
     ap.add_argument("--excel", action="store_true")
     ap.add_argument("--legacy", action="store_true")
     ap.add_argument("--legacy-doc", choices=["auto", "com", "external"], default="com")
+    ap.add_argument("--doc-single-thread", action="store_true")
     ap.add_argument("--max-workers", type=int, default=0)
     ap.add_argument("--exclude-folders", default="")
     ap.add_argument("--diag", action="store_true")
     args = ap.parse_args()
 
-    if args.diag:
-        _emit_startup_diag()
-
     args.legacy_doc = (args.legacy_doc or "com").lower()
 
-    configure_doc_diag(args.diag, args.perfile, args.exts, args.legacy_doc)
+    if args.perfile is None or args.perfile < 0:
+        args.perfile = 0
+
+    if args.diag:
+        _emit_startup_diag(args.perfile, args.exts, args.legacy_doc, args.doc_single_thread)
+    elif args.exts:
+        sys.stderr.write(f"diag: exts={args.exts}\n")
+        sys.stderr.flush()
+
+    configure_doc_diag(
+        args.diag,
+        args.perfile,
+        args.exts,
+        args.legacy_doc,
+        args.doc_single_thread,
+    )
+
+    if args.legacy_doc in {"com", "auto"}:
+        configure_doc_workers(args.doc_single_thread)
+    else:
+        shutdown_doc_workers()
 
     ext_filter = set(
         e.strip().lower()
@@ -1093,21 +1184,32 @@ def main() -> None:
             warn_once(f"file:{p}", f"処理失敗: {p} ({exc})")
             return p, 0
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(worker, p): p for p in files}
-        for fut in as_completed(futures):
-            path = futures[fut]
-            try:
-                _, hits = fut.result()
-            except Exception as exc:  # pragma: no cover - already handled
-                warn_once(f"future:{path}", f"処理中に例外: {path} ({exc})")
-                hits = 0
-            processed += 1
-            total_hits += hits
-            emit_status("progress", processed, total_hits, path)
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(worker, p): p for p in files}
+            for fut in as_completed(futures):
+                path = futures[fut]
+                try:
+                    _, hits = fut.result()
+                except Exception as exc:  # pragma: no cover - already handled
+                    warn_once(f"future:{path}", f"処理中に例外: {path} ({exc})")
+                    hits = 0
+                processed += 1
+                total_hits += hits
+                emit_status("progress", processed, total_hits, path)
 
-    elapsed = time.time() - start
-    emit_status("done", processed, total_hits, f"{elapsed:.3f}")
+        elapsed = time.time() - start
+        emit_status("done", processed, total_hits, f"{elapsed:.3f}")
+    finally:
+        shutdown_doc_workers()
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
