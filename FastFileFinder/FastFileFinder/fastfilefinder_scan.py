@@ -83,6 +83,15 @@ stdout_lock = threading.Lock()
 word_diag_lock = threading.Lock()
 warned = set()
 
+DOC_DIAG_CONTEXT = {
+    "enabled": False,
+    "perfile": 0,
+    "exts": "",
+    "legacy_mode": "com",
+}
+DOC_DIAG_LOCK = threading.Lock()
+DOC_DIAG_EMITTED = False
+
 
 def ensure_extended_path(path: str) -> str:
     """Return a path with the Windows long path prefix when needed."""
@@ -145,9 +154,15 @@ def _clean_detail(detail: Optional[str]) -> Optional[str]:
     return cleaned
 
 
+def _log_doc_stage(stage: str, detail: str) -> None:
+    message = f"LOG .doc [{stage}] {detail}"
+    sys.stderr.write(message + "\n")
+    sys.stderr.flush()
+
+
 def _log_doc_error(stage: str, path: str, detail: Optional[str] = None) -> None:
     detail = _clean_detail(detail)
-    message = f"ERR .doc convert failed [{stage}]: {path}"
+    message = f"ERR .doc [{stage}] {path}"
     if detail:
         message += f" ({detail})"
     sys.stderr.write(message + "\n")
@@ -364,6 +379,8 @@ WD_FORMAT_UNICODE_TEXT = 7
 MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 DOC_LOCK_RETRY_COUNT = 2
 DOC_LOCK_RETRY_DELAY = 0.6
+DOC_SAVEAS_POLL_INTERVAL = 0.1
+DOC_SAVEAS_MAX_WAIT = 10.0
 
 WORD_DIAGNOSTICS_EMITTED = False
 
@@ -488,6 +505,67 @@ def _emit_word_diagnostics(word) -> None:
     sys.stderr.flush()
 
 
+def configure_doc_diag(enabled: bool, perfile: int, exts_argument: str, legacy_mode: str) -> None:
+    global DOC_DIAG_CONTEXT, DOC_DIAG_EMITTED
+    exts_display = (exts_argument or "").strip()
+    if not exts_display:
+        exts_display = "*"
+    DOC_DIAG_CONTEXT = {
+        "enabled": bool(enabled),
+        "perfile": perfile,
+        "exts": exts_display,
+        "legacy_mode": (legacy_mode or "com").lower(),
+    }
+    DOC_DIAG_EMITTED = not enabled
+
+
+def _emit_doc_diag_if_needed(word) -> None:
+    global DOC_DIAG_EMITTED
+    if not DOC_DIAG_CONTEXT.get("enabled"):
+        return
+    with DOC_DIAG_LOCK:
+        if DOC_DIAG_EMITTED:
+            return
+        DOC_DIAG_EMITTED = True
+
+    arch = platform.architecture()[0]
+    if "64" in arch:
+        py_bits = "64"
+    elif "32" in arch:
+        py_bits = "32"
+    else:
+        py_bits = arch
+
+    word_bits = "unknown"
+    try:
+        os_info = str(word.System.OperatingSystem)
+        if "64" in os_info:
+            word_bits = "64"
+        elif "32" in os_info:
+            word_bits = "32"
+    except Exception:
+        pass
+
+    gencache_display = "unavailable"
+    if win32com is not None:
+        try:
+            cache_path = win32com.client.gencache.GetGeneratePath()
+        except Exception as exc:
+            gencache_display = f"error:{_clean_detail(_error_text(exc)) or type(exc).__name__}"
+        else:
+            gencache_display = cache_path or "unknown"
+    gencache_display = _clean_detail(gencache_display) or gencache_display
+
+    perfile = DOC_DIAG_CONTEXT.get("perfile", 0)
+    exts_display = DOC_DIAG_CONTEXT.get("exts", "*") or "*"
+    legacy_mode = DOC_DIAG_CONTEXT.get("legacy_mode", "com")
+
+    diag = (
+        f"diag: py={py_bits}, word={word_bits}, gencache={gencache_display}, "
+        f"perfile={perfile}, exts={exts_display}, legacy-doc-mode={legacy_mode}"
+    )
+    sys.stderr.write(diag + "\n")
+    sys.stderr.flush()
 def _build_open_sequences(file_name: str) -> List[dict]:
     base = {
         "FileName": file_name,
@@ -560,7 +638,7 @@ def _describe_word_launch_failure(exc: Exception) -> str:
 def _convert_doc_via_com(path: str) -> List[str]:
     if pythoncom is None or win32com is None:
         raise DocConversionError(
-            "COM-Init",
+            "Init",
             "pywin32 がインストールされていないため Word COM を利用できません (必要に応じて 'python -m pywin32_postinstall -install' を実行してください)",
         )
 
@@ -575,17 +653,15 @@ def _convert_doc_via_com(path: str) -> List[str]:
         try:
             pythoncom.CoInitialize()
         except Exception as exc:
-            raise DocConversionError("COM-Init", _format_com_exception(exc) or _error_text(exc))
+            raise DocConversionError("Init", _format_com_exception(exc) or _error_text(exc))
         coinitialized = True
 
         try:
             word = win32com.client.gencache.EnsureDispatch("Word.Application")
         except Exception as exc:  # pragma: no cover - depends on Word availability
             reason = _describe_word_launch_failure(exc)
-            detail = ", ".join(
-                part for part in [reason, _format_com_exception(exc)] if part
-            )
-            raise DocConversionError("COM-Launch", detail)
+            detail = ", ".join(part for part in [reason, _format_com_exception(exc)] if part)
+            raise DocConversionError("Launch", detail)
 
         try:
             word.Visible = True
@@ -600,7 +676,10 @@ def _convert_doc_via_com(path: str) -> List[str]:
                 _ = word.DisplayAlerts
             except Exception as exc:
                 if _looks_like_eula_block(exc):
-                    warn_once("word_eula", "Word の初回起動ダイアログ (EULA) が表示されている可能性があります。Word を手動で起動し、ライセンスに同意してください。")
+                    warn_once(
+                        "word_eula",
+                        "Word の初回起動ダイアログ (EULA) が表示されている可能性があります。Word を手動で起動し、ライセンスに同意してください。",
+                    )
 
         try:
             constants = getattr(win32com.client, "constants", None)
@@ -616,9 +695,10 @@ def _convert_doc_via_com(path: str) -> List[str]:
                 pass
 
         _emit_word_diagnostics(word)
+        _emit_doc_diag_if_needed(word)
 
         normalized_path = os.path.abspath(path)
-        candidates = []
+        candidates: List[str] = []
         seen = set()
 
         def _add_candidate(candidate: str) -> None:
@@ -642,7 +722,9 @@ def _convert_doc_via_com(path: str) -> List[str]:
             detail_args = _summarize_open_args(last_open_args)
             if detail_args:
                 detail_parts.append(detail_args.strip(", "))
-            raise DocConversionError("COM-Open", ", ".join(detail_parts) or "msg=Open failed")
+            raise DocConversionError("Open", ", ".join(detail_parts) or "msg=Open failed")
+
+        _log_doc_stage("Open", path)
 
         fd, temp_raw = tempfile.mkstemp(suffix=".txt")
         os.close(fd)
@@ -661,7 +743,20 @@ def _convert_doc_via_com(path: str) -> List[str]:
                 else:
                     doc.SaveAs(save_target, WD_FORMAT_UNICODE_TEXT)
             except Exception as exc:
-                raise DocConversionError("COM-SaveAs", _format_com_exception(exc) or _error_text(exc))
+                raise DocConversionError("SaveAs", _format_com_exception(exc) or _error_text(exc))
+
+            deadline = time.time() + DOC_SAVEAS_MAX_WAIT
+            while True:
+                try:
+                    if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        break
+                except OSError:
+                    pass
+                if time.time() >= deadline:
+                    raise DocConversionError("SaveAs", "msg=SaveAs produced no data")
+                time.sleep(DOC_SAVEAS_POLL_INTERVAL)
+
+            _log_doc_stage("SaveAs", temp_path)
         finally:
             try:
                 doc.Close(False)
@@ -669,15 +764,21 @@ def _convert_doc_via_com(path: str) -> List[str]:
                 pass
             doc = None
 
+        _log_doc_stage("Read", temp_path)
+
+        lines: List[str] = []
         try:
-            with open(temp_path, "r", encoding="utf-16", errors="replace") as reader:
-                return reader.read().splitlines()
+            with open(temp_path, "r", encoding="utf-16", errors="replace", newline="") as reader:
+                for raw_line in reader:
+                    normalized = raw_line.replace("\r", "").rstrip("\n")
+                    lines.append(normalized)
         except Exception as exc:
-            raise DocConversionError("COM-Read", _format_com_exception(exc) or _error_text(exc))
+            raise DocConversionError("Read", _format_com_exception(exc) or _error_text(exc))
+        return lines
     except DocConversionError:
         raise
     except Exception as exc:
-        raise DocConversionError("COM", _format_com_exception(exc) or _error_text(exc))
+        raise DocConversionError("Unexpected", _format_com_exception(exc) or _error_text(exc))
     finally:
         if doc is not None:
             try:
@@ -854,10 +955,11 @@ def scan_doc_legacy(path: str, matcher, perfile: int, legacy_mode: str) -> int:
     hits = 0
     for lineno, line in enumerate(iter_doc_legacy_lines(path, legacy_mode), 1):
         if matcher(line):
-            emit_tsv(path, "doc", lineno, line)
+            emit_tsv(path, "", lineno, line)
             hits += 1
             if perfile and hits >= perfile:
                 break
+    _log_doc_stage("Emit", f"{path} ({hits} hits)")
     return hits
 
 
@@ -952,6 +1054,8 @@ def main() -> None:
         _emit_startup_diag()
 
     args.legacy_doc = (args.legacy_doc or "com").lower()
+
+    configure_doc_diag(args.diag, args.perfile, args.exts, args.legacy_doc)
 
     ext_filter = set(
         e.strip().lower()
