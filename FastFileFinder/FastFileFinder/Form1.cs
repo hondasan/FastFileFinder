@@ -955,7 +955,7 @@ namespace FastFileFinder
                 }
                 else if (c == '\"')
                 {
-                    sb.Append('\', backslashes * 2 + 1);
+                    sb.Append('\\', backslashes * 2 + 1);
                     sb.Append(c);
                     backslashes = 0;
                 }
@@ -963,7 +963,7 @@ namespace FastFileFinder
                 {
                     if (backslashes > 0)
                     {
-                        sb.Append('\', backslashes);
+                        sb.Append('\\', backslashes);
                         backslashes = 0;
                     }
                     sb.Append(c);
@@ -972,7 +972,7 @@ namespace FastFileFinder
 
             if (backslashes > 0)
             {
-                sb.Append('\', backslashes * 2);
+                sb.Append('\\', backslashes * 2);
             }
 
             sb.Append('\"');
