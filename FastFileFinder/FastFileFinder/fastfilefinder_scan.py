@@ -49,6 +49,8 @@ except Exception:  # pragma: no cover - dependency may be missing
     pythoncom = None  # type: ignore
     win32com = None  # type: ignore
 
+# Required optional packages: python-docx, openpyxl, "xlrd<2.0", pywin32
+
 
 # Common encodings to try for text files
 ENCODINGS = (
@@ -68,6 +70,28 @@ except Exception:
 
 stdout_lock = threading.Lock()
 warned = set()
+
+
+def ensure_extended_path(path: str) -> str:
+    """Return a path with the Windows long path prefix when needed."""
+
+    normalized = os.path.abspath(path)
+    if os.name != "nt":
+        return normalized
+
+    if normalized.startswith("\\\\?\\"):
+        return normalized
+    if normalized.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + normalized[2:]
+    if len(normalized) >= 248:
+        return "\\\\?\\" + normalized
+    return normalized
+
+
+def log_doc_warning(path: str, error: Exception) -> None:
+    message = f"⚠ .doc をテキストへ変換できませんでした: {path} ({error})"
+    sys.stderr.write(message + "\n")
+    sys.stderr.flush()
 
 
 def emit_tsv(path: str, entry: str, lineno: int, line: str) -> None:
@@ -264,48 +288,85 @@ def scan_xlsx(path: str, matcher, perfile: int) -> int:
     return hits
 
 
+WD_FORMAT_UNICODE_TEXT = 7
+
+
 def extract_doc_text(path: str) -> List[str]:
     if pythoncom is None or win32com is None:
         warn_once("doc", "pywin32 がインストールされていないため .doc をスキップします")
         return []
 
+    original_path = path
     temp_path: Optional[str] = None
     word = None
     doc = None
-    lines: List[str] = []
     coinitialized = False
 
     try:
         pythoncom.CoInitialize()
         coinitialized = True
         try:
-            word = win32com.client.Dispatch("Word.Application")
-        except Exception:
-            warn_once("doc:word", "Microsoft Word が利用できないため .doc をスキップします")
+            word = win32com.client.DispatchEx("Word.Application")
+        except Exception as exc:
+            log_doc_warning(original_path, exc)
             return []
 
         word.Visible = False
         word.DisplayAlerts = 0
 
-        target_path = os.path.abspath(path)
+        normalized_path = os.path.abspath(path)
+        target_candidates = []
+        preferred = ensure_extended_path(normalized_path)
+        target_candidates.append(preferred)
+        if preferred != normalized_path:
+            target_candidates.append(normalized_path)
 
-        try:
+        doc = None
+        open_error: Optional[Exception] = None
+        for candidate in target_candidates:
             try:
-                doc = word.Documents.Open(target_path, ReadOnly=True, AddToRecentFiles=False)
-            except TypeError:
-                doc = word.Documents.Open(target_path, ReadOnly=True)
-        except Exception as exc:
-            warn_once(f"doc:{path}", f".doc を開けませんでした: {path} ({exc})")
+                doc = word.Documents.Open(
+                    candidate,
+                    ReadOnly=True,
+                    AddToRecentFiles=False,
+                )
+                break
+            except TypeError as exc:
+                open_error = exc
+                try:
+                    doc = word.Documents.Open(candidate, ReadOnly=True)
+                    break
+                except Exception as retry_exc:
+                    open_error = retry_exc
+            except Exception as exc:
+                open_error = exc
+
+        if doc is None:
+            log_doc_warning(original_path, open_error or RuntimeError("Word.Documents.Open failed"))
             return []
 
-        fd, temp_path = tempfile.mkstemp(suffix=".txt")
+        fd, temp_raw = tempfile.mkstemp(suffix=".txt")
         os.close(fd)
+        temp_path = os.path.abspath(temp_raw)
+        save_candidates = []
+        preferred_save = ensure_extended_path(temp_path)
+        save_candidates.append(preferred_save)
+        if preferred_save != temp_path:
+            save_candidates.append(temp_path)
 
         try:
-            doc.SaveAs2(temp_path, FileFormat=2)
-        except Exception as exc:
-            warn_once(f"doc:{path}", f".doc をテキストへ変換できませんでした: {path} ({exc})")
-            return []
+            save_error: Optional[Exception] = None
+            for candidate in save_candidates:
+                try:
+                    doc.SaveAs2(candidate, FileFormat=WD_FORMAT_UNICODE_TEXT)
+                    save_error = None
+                    break
+                except Exception as exc:
+                    save_error = exc
+
+            if save_error is not None:
+                log_doc_warning(original_path, save_error)
+                return []
         finally:
             try:
                 doc.Close(False)
@@ -313,17 +374,29 @@ def extract_doc_text(path: str) -> List[str]:
                 pass
             doc = None
 
-        for enc in ENCODINGS:
-            try:
-                with open(temp_path, "r", encoding=enc, errors="replace") as reader:
-                    lines = reader.read().splitlines()
-                break
-            except UnicodeDecodeError:
-                continue
+        try:
+            read_candidates = []
+            preferred_read = ensure_extended_path(temp_path)
+            read_candidates.append(preferred_read)
+            if preferred_read != temp_path:
+                read_candidates.append(temp_path)
 
-        return lines
+            read_error: Optional[Exception] = None
+            for candidate in read_candidates:
+                try:
+                    with open(candidate, "r", encoding="utf-16") as reader:
+                        return reader.read().splitlines()
+                except Exception as exc:
+                    read_error = exc
+
+            if read_error is not None:
+                log_doc_warning(original_path, read_error)
+                return []
+        except Exception as exc:
+            log_doc_warning(original_path, exc)
+            return []
     except Exception as exc:
-        warn_once(f"doc:{path}", f"Word からの .doc 変換中にエラー: {path} ({exc})")
+        log_doc_warning(original_path, exc)
         return []
     finally:
         if doc is not None:
@@ -336,11 +409,18 @@ def extract_doc_text(path: str) -> List[str]:
                 word.Quit()
             except Exception:
                 pass
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
+        if temp_path:
+            remove_candidates = []
+            preferred_remove = ensure_extended_path(temp_path)
+            remove_candidates.append(preferred_remove)
+            if preferred_remove != temp_path:
+                remove_candidates.append(temp_path)
+            for candidate in remove_candidates:
+                try:
+                    os.remove(candidate)
+                    break
+                except Exception:
+                    continue
         if coinitialized:
             try:
                 pythoncom.CoUninitialize()
