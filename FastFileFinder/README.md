@@ -24,7 +24,7 @@ FastFileFinder は Python 製スキャナ `fastfilefinder_scan.py` を WinForms 
 | Python 3.8+ | 必須 |  | `python` コマンドから呼び出されます |
 | `python-docx` | 任意 | 最新 | `.docx` の本文検索に使用 |
 | `openpyxl` | 任意 | 最新 | `.xlsx` のセル検索に使用 |
-| `antiword` | 任意 | 0.37 以降 | `.doc` (旧形式) をテキスト化。インストールされていない場合は自動スキップ |
+| `pywin32` | 任意 | 最新 | Microsoft Word COM を利用して `.doc` (旧形式) をテキスト化。Word 未インストール環境では自動スキップ |
 | `xlrd` | 任意 | 1.2.x | `.xls` (旧形式) のセル検索に使用。2.x 系では `.xls` 非対応のため 1.2 系を利用してください |
 
 インストール例:
@@ -32,7 +32,7 @@ FastFileFinder は Python 製スキャナ `fastfilefinder_scan.py` を WinForms 
 ```bash
 pip install python-docx openpyxl
 pip install "xlrd<2.0"
-# antiword は OS のパッケージ管理ツール等で導入 (例: winget install Antiword)
+pip install pywin32
 ```
 
 これらの依存関係が存在しない場合、該当フォーマットはスキップされ、標準エラーに 1 行だけ警告を出力します。
@@ -71,7 +71,7 @@ python fastfilefinder_scan.py --folder <dir> --query <text>
     [--word] [--excel] [--legacy]
 ```
 
-- `--legacy` を有効にすると `.doc` / `.xls` を試行します。`antiword` や `xlrd (<=1.2)` が無い場合は警告のみでスキップします。
+- `--legacy` を有効にすると `.doc` / `.xls` を試行します。`pywin32` (および Microsoft Word) や `xlrd (<=1.2)` が無い場合は警告のみでスキップします。
 - `--exclude-folders` はフォルダ名単位でマッチし、サブツリー全体を探索対象から除外します。
 - `--max-workers` を 0 (既定) にすると `os.cpu_count()` を基準に自動調整します。
 
