@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -32,7 +33,7 @@ namespace FastFileFinder
         private readonly Stopwatch _stopwatch = new Stopwatch();
 
         private Process _process;
-        private CancellationTokenSource _cancellation;
+        private System.Threading.CancellationTokenSource _cancellation;
         private bool _isSearching;
         private bool _cancelRequested;
 
@@ -857,7 +858,7 @@ namespace FastFileFinder
                 _process.Start();
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
-                _cancellation = new CancellationTokenSource();
+                _cancellation = new System.Threading.CancellationTokenSource();
                 _isSearching = true;
                 _cancelRequested = false;
                 SetInputsEnabled(false);
