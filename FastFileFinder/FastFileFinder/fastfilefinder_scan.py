@@ -44,7 +44,7 @@ ENCODINGS = (
 # Ensure stdout is UTF-8
 try:
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 
@@ -392,6 +392,7 @@ def main() -> None:
     emit_status("queued", len(files))
 
     max_workers = args.max_workers if args.max_workers > 0 else (os.cpu_count() or 4)
+    max_workers = max(1, max_workers)
     processed = 0
     total_hits = 0
     start = time.time()

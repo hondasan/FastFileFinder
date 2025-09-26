@@ -2,11 +2,13 @@
 // .NET Framework 4.8 / C# 7.3
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -35,6 +37,9 @@ namespace FastFileFinder
 
     public class MainForm : Form
     {
+        private const int BatchSize = 1000;
+        private const int MaxErrorLines = 100;
+
         private readonly TextBox txtRoot;
         private readonly TextBox txtQuery;
         private readonly TextBox txtExts;
@@ -58,10 +63,13 @@ namespace FastFileFinder
         private readonly DataGridView grid;
         private readonly Timer uiTimer;
         private readonly Timer filterTimer;
+        private readonly Timer batchTimer;
+        private readonly ToolTip statusToolTip;
 
         private readonly List<SearchRow> allRows = new List<SearchRow>();
         private readonly List<SearchRow> viewRows = new List<SearchRow>();
         private readonly object rowsLock = new object();
+        private readonly Queue<string> errorBuffer = new Queue<string>();
         private readonly Stopwatch stopwatch = new Stopwatch();
         private readonly Color rowBack = Color.White;
         private readonly Color rowAlt = Color.FromArgb(0xF2, 0xF4, 0xF8);
@@ -69,6 +77,7 @@ namespace FastFileFinder
         private readonly Color rowSelected = Color.FromArgb(0xE5, 0xF1, 0xFB);
         private readonly Color highlightBack = Color.FromArgb(0xFF, 0xF2, 0xAB);
 
+        private ConcurrentQueue<SearchRow> pendingRows = new ConcurrentQueue<SearchRow>();
         private Process currentProc;
         private bool searchRunning;
         private bool cancelRequested;
@@ -78,9 +87,11 @@ namespace FastFileFinder
         private string highlightText = string.Empty;
         private bool highlightIsRegex;
         private int processedFiles;
+        private int totalHitsReported;
         private string currentFileDisplay = string.Empty;
         private string statusMessage = string.Empty;
         private DateTime statusMessageExpire;
+        private bool errorTooltipDirty;
 
         public MainForm()
         {
@@ -284,7 +295,13 @@ namespace FastFileFinder
             grid.CellValueNeeded += Grid_CellValueNeeded;
             grid.CellPainting += Grid_CellPainting;
             grid.CellMouseEnter += (s, e) => SetHoverRow(e.RowIndex);
-            grid.CellMouseLeave += (s, e) => { if (e.RowIndex >= 0) SetHoverRow(-1); };
+            grid.CellMouseLeave += (s, e) =>
+            {
+                if (e.RowIndex >= 0)
+                {
+                    SetHoverRow(-1);
+                }
+            };
             grid.MouseLeave += (s, e) => SetHoverRow(-1);
             grid.CellDoubleClick += (s, e) => OpenSelection();
             grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
@@ -325,6 +342,19 @@ namespace FastFileFinder
             statusPanel.Controls.Add(lblHits, 2, 0);
             statusPanel.Controls.Add(lblCurrent, 3, 0);
 
+            statusToolTip = new ToolTip
+            {
+                AutomaticDelay = 150,
+                AutoPopDelay = 15000,
+                InitialDelay = 500,
+                ReshowDelay = 150,
+            };
+            statusToolTip.SetToolTip(lblCurrent, string.Empty);
+
+            var statusMenu = new ContextMenuStrip();
+            statusMenu.Items.Add("エラー履歴をコピー", null, (s, e) => CopyErrors());
+            lblCurrent.ContextMenuStrip = statusMenu;
+
             mainLayout.Controls.Add(statusPanel, 0, 3);
 
             Controls.Add(mainLayout);
@@ -339,6 +369,9 @@ namespace FastFileFinder
                 ApplyFilter();
             };
 
+            batchTimer = new Timer { Interval = 75 };
+            batchTimer.Tick += (s, e) => DrainPendingRows(BatchSize);
+
             txtQuickFilter.TextChanged += (s, e) => filterTimer.Start();
 
             FormClosing += (s, e) =>
@@ -346,9 +379,16 @@ namespace FastFileFinder
                 if (searchRunning)
                 {
                     CancelSearch();
-                    if (currentProc != null)
+                    var proc = currentProc;
+                    if (proc != null)
                     {
-                        try { currentProc.WaitForExit(2000); } catch { }
+                        try
+                        {
+                            proc.WaitForExit(2000);
+                        }
+                        catch
+                        {
+                        }
                     }
                 }
             };
@@ -435,7 +475,8 @@ namespace FastFileFinder
 
         private void EnableDoubleBuffer(DataGridView dgv)
         {
-            typeof(DataGridView).InvokeMember("DoubleBuffered", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.SetProperty, null, dgv, new object[] { true });
+            var prop = typeof(DataGridView).GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic);
+            prop?.SetValue(dgv, true, null);
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -445,16 +486,19 @@ namespace FastFileFinder
                 _ = StartSearchAsync();
                 return true;
             }
+
             if (keyData == Keys.Escape)
             {
                 CancelSearch();
                 return true;
             }
+
             if (keyData == Keys.F5)
             {
                 _ = StartSearchAsync();
                 return true;
             }
+
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -506,23 +550,49 @@ namespace FastFileFinder
                 Quote(query),
             };
 
-            if (chkRegex.Checked) args.Add("--regex");
-            if (chkZip.Checked) args.Add("--zip");
-            if (chkRecursive.Checked) args.Add("--recursive");
-            if (chkWord.Checked) args.Add("--word");
-            if (chkExcel.Checked) args.Add("--excel");
-            if (chkLegacy.Checked) args.Add("--legacy");
+            if (chkRegex.Checked)
+            {
+                args.Add("--regex");
+            }
+
+            if (chkZip.Checked)
+            {
+                args.Add("--zip");
+            }
+
+            if (chkRecursive.Checked)
+            {
+                args.Add("--recursive");
+            }
+
+            if (chkWord.Checked)
+            {
+                args.Add("--word");
+            }
+
+            if (chkExcel.Checked)
+            {
+                args.Add("--excel");
+            }
+
+            if (chkLegacy.Checked)
+            {
+                args.Add("--legacy");
+            }
+
             var exts = txtExts.Text.Trim();
             if (!string.IsNullOrEmpty(exts))
             {
                 args.Add("--exts");
                 args.Add(Quote(exts));
             }
+
             if (perFile > 0)
             {
                 args.Add("--perfile");
                 args.Add(perFile.ToString());
             }
+
             if (numMaxWorkers.Value > 0)
             {
                 args.Add("--max-workers");
@@ -537,11 +607,18 @@ namespace FastFileFinder
                 viewRows.Clear();
                 grid.RowCount = 0;
             }
+
+            pendingRows = new ConcurrentQueue<SearchRow>();
             processedFiles = 0;
+            totalHitsReported = 0;
             currentFileDisplay = string.Empty;
             statusMessage = string.Empty;
             hoverRow = -1;
             cancelRequested = false;
+            filterText = txtQuickFilter.Text.Trim();
+            errorBuffer.Clear();
+            errorTooltipDirty = true;
+            statusToolTip.SetToolTip(lblCurrent, string.Empty);
 
             btnSearch.Enabled = false;
             btnCancel.Enabled = true;
@@ -549,6 +626,7 @@ namespace FastFileFinder
             stopwatch.Reset();
             stopwatch.Start();
             uiTimer.Start();
+            batchTimer.Start();
             UpdateStatusLabels();
 
             currentProc = new Process
@@ -585,8 +663,17 @@ namespace FastFileFinder
                 btnSearch.Enabled = true;
                 btnCancel.Enabled = false;
                 uiTimer.Stop();
+                batchTimer.Stop();
                 stopwatch.Reset();
                 MessageBox.Show("python 実行エラー: " + ex.Message, "FastFileFinder", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                try
+                {
+                    currentProc?.Dispose();
+                }
+                catch
+                {
+                }
+                currentProc = null;
                 return;
             }
 
@@ -620,7 +707,8 @@ namespace FastFileFinder
                 LineNo = lineNo,
                 Snippet = parts[3],
             };
-            BeginInvoke((Action)(() => AddRow(row)));
+
+            pendingRows.Enqueue(row);
         }
 
         private void CurrentProc_ErrorDataReceived(object sender, DataReceivedEventArgs e)
@@ -632,10 +720,27 @@ namespace FastFileFinder
 
             BeginInvoke((Action)(() =>
             {
+                AppendError(e.Data);
                 statusMessage = "⚠ " + e.Data;
                 statusMessageExpire = DateTime.Now.AddSeconds(10);
                 UpdateStatusLabels();
             }));
+        }
+
+        private void AppendError(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return;
+            }
+
+            errorBuffer.Enqueue(line);
+            while (errorBuffer.Count > MaxErrorLines)
+            {
+                errorBuffer.Dequeue();
+            }
+
+            errorTooltipDirty = true;
         }
 
         private void HandleStatusLine(string line)
@@ -662,10 +767,7 @@ namespace FastFileFinder
                     }
                     if (parts.Length > 2 && int.TryParse(parts[2], out var hits))
                     {
-                        if (hits > allRows.Count)
-                        {
-                            lblHits.Text = $"ヒット: {hits:N0} 件 (表示: {viewRows.Count:N0})";
-                        }
+                        totalHitsReported = hits;
                     }
                     if (parts.Length > 3)
                     {
@@ -679,7 +781,11 @@ namespace FastFileFinder
                     }
                     if (parts.Length > 2 && int.TryParse(parts[2], out var doneHits))
                     {
-                        statusMessage = $"完了: {doneHits:N0} 件";
+                        totalHitsReported = doneHits;
+                    }
+                    if (parts.Length > 3)
+                    {
+                        statusMessage = $"完了: {parts[3]} 秒";
                         statusMessageExpire = DateTime.Now.AddSeconds(30);
                     }
                     break;
@@ -692,31 +798,67 @@ namespace FastFileFinder
             UpdateStatusLabels();
         }
 
-        private void AddRow(SearchRow row)
+        private void DrainPendingRows(int limit)
         {
+            if (pendingRows == null)
+            {
+                return;
+            }
+
+            var batch = new List<SearchRow>(Math.Max(16, Math.Min(limit <= 0 ? BatchSize : limit, BatchSize)));
+            while ((limit <= 0 || batch.Count < limit) && pendingRows.TryDequeue(out var row))
+            {
+                batch.Add(row);
+            }
+
+            if (batch.Count == 0)
+            {
+                return;
+            }
+
+            int addedToView = 0;
+            int startIndex = 0;
+            int newCount = 0;
+            int totalRows = 0;
+
             lock (rowsLock)
             {
-                allRows.Add(row);
-                if (IsVisibleByFilter(row))
+                foreach (var row in batch)
                 {
-                    viewRows.Add(row);
-                    grid.RowCount = viewRows.Count;
-                    grid.InvalidateRow(viewRows.Count - 1);
+                    allRows.Add(row);
+                    if (IsVisibleByFilter(row))
+                    {
+                        viewRows.Add(row);
+                        addedToView++;
+                    }
+                }
+
+                totalRows = allRows.Count;
+                newCount = viewRows.Count;
+                if (addedToView > 0)
+                {
+                    startIndex = newCount - addedToView;
+                    if (startIndex < 0)
+                    {
+                        startIndex = 0;
+                    }
                 }
             }
-            UpdateStatusLabels();
-        }
 
-        private bool IsVisibleByFilter(SearchRow row)
-        {
-            if (string.IsNullOrEmpty(filterText))
+            if (addedToView > 0)
             {
-                return true;
+                grid.RowCount = newCount;
+                for (int i = startIndex; i < newCount; i++)
+                {
+                    if (i >= 0 && i < grid.RowCount)
+                    {
+                        grid.InvalidateRow(i);
+                    }
+                }
             }
 
-            return (row.Path?.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0
-                || (row.Entry?.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0
-                || (row.Snippet?.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+            totalHitsReported = Math.Max(totalHitsReported, totalRows);
+            UpdateStatusLabels();
         }
 
         private void ApplyFilter()
@@ -736,6 +878,18 @@ namespace FastFileFinder
             }
             UpdateStatusLabels();
             grid.Invalidate();
+        }
+
+        private bool IsVisibleByFilter(SearchRow row)
+        {
+            if (string.IsNullOrEmpty(filterText))
+            {
+                return true;
+            }
+
+            return (row.Path?.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0
+                || (row.Entry?.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0
+                || (row.Snippet?.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
         }
 
         private void PrepareHighlight(string query, bool isRegex)
@@ -768,33 +922,77 @@ namespace FastFileFinder
             }
 
             cancelRequested = true;
+            btnCancel.Enabled = false;
+            statusMessage = "キャンセルしています...";
+            statusMessageExpire = DateTime.Now.AddSeconds(5);
+            UpdateStatusLabels();
+
+            var proc = currentProc;
+            if (proc == null)
+            {
+                return;
+            }
+
             try
             {
-                if (currentProc != null && !currentProc.HasExited)
-                {
-                    currentProc.Kill();
-                }
+                proc.CancelOutputRead();
             }
             catch
             {
             }
+
+            try
+            {
+                proc.CancelErrorRead();
+            }
+            catch
+            {
+            }
+
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (!proc.HasExited)
+                    {
+                        proc.CloseMainWindow();
+                        if (!proc.WaitForExit(1500))
+                        {
+                            proc.Kill();
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            });
         }
 
         private void SearchCompleted()
         {
+            batchTimer.Stop();
+            DrainPendingRows(0);
             uiTimer.Stop();
             stopwatch.Stop();
             searchRunning = false;
             btnSearch.Enabled = true;
             btnCancel.Enabled = false;
-            UpdateStatusLabels();
-            if (currentProc != null)
+
+            var proc = currentProc;
+            if (proc != null)
             {
-                currentProc.OutputDataReceived -= CurrentProc_OutputDataReceived;
-                currentProc.ErrorDataReceived -= CurrentProc_ErrorDataReceived;
-                try { currentProc.Dispose(); } catch { }
+                proc.OutputDataReceived -= CurrentProc_OutputDataReceived;
+                proc.ErrorDataReceived -= CurrentProc_ErrorDataReceived;
+                try
+                {
+                    proc.Dispose();
+                }
+                catch
+                {
+                }
                 currentProc = null;
             }
+
             if (cancelRequested)
             {
                 statusMessage = "中断しました";
@@ -805,15 +1003,29 @@ namespace FastFileFinder
                 statusMessage = "完了";
                 statusMessageExpire = DateTime.Now.AddSeconds(10);
             }
+
+            lock (rowsLock)
+            {
+                totalHitsReported = Math.Max(totalHitsReported, allRows.Count);
+            }
+
             UpdateStatusLabels();
         }
 
         private void UpdateStatusLabels()
         {
-            var elapsed = stopwatch.Elapsed;
-            lblElapsed.Text = "経過: " + elapsed.ToString("hh\\:mm\\:ss");
+            lblElapsed.Text = "経過: " + stopwatch.Elapsed.ToString("hh\\:mm\\:ss");
             lblFiles.Text = $"処理済み: {processedFiles:N0} 件";
-            lblHits.Text = $"ヒット: {allRows.Count:N0} 件 (表示: {viewRows.Count:N0})";
+
+            int visibleCount;
+            int totalCount;
+            lock (rowsLock)
+            {
+                visibleCount = viewRows.Count;
+                totalCount = allRows.Count;
+            }
+
+            lblHits.Text = $"ヒット: {Math.Max(totalHitsReported, totalCount):N0} 件 (表示: {visibleCount:N0})";
 
             string display = string.Empty;
             if (!string.IsNullOrEmpty(currentFileDisplay))
@@ -838,6 +1050,21 @@ namespace FastFileFinder
             }
 
             lblCurrent.Text = string.IsNullOrEmpty(display) ? (searchRunning ? "処理中..." : "Ready") : display;
+
+            if (errorTooltipDirty)
+            {
+                if (errorBuffer.Count > 0)
+                {
+                    var arr = errorBuffer.ToArray();
+                    var recent = arr.Skip(Math.Max(0, arr.Length - 10)).ToArray();
+                    statusToolTip.SetToolTip(lblCurrent, string.Join(Environment.NewLine, recent));
+                }
+                else
+                {
+                    statusToolTip.SetToolTip(lblCurrent, string.Empty);
+                }
+                errorTooltipDirty = false;
+            }
         }
 
         private string TruncatePath(string value, int max)
@@ -862,6 +1089,7 @@ namespace FastFileFinder
             {
                 return;
             }
+
             SearchRow row;
             lock (rowsLock)
             {
@@ -869,6 +1097,7 @@ namespace FastFileFinder
                 {
                     return;
                 }
+
                 row = viewRows[e.RowIndex];
             }
 
@@ -898,8 +1127,8 @@ namespace FastFileFinder
                 return;
             }
 
-            var selected = (e.State & DataGridViewElementStates.Selected) != 0;
-            var hover = !selected && e.RowIndex == hoverRow;
+            bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
+            bool hover = !selected && e.RowIndex == hoverRow;
             var background = selected ? rowSelected : hover ? rowHover : (e.RowIndex % 2 == 0 ? rowBack : rowAlt);
 
             using (var brush = new SolidBrush(background))
@@ -1111,6 +1340,26 @@ namespace FastFileFinder
             }
         }
 
+        private void CopyErrors()
+        {
+            if (errorBuffer.Count == 0)
+            {
+                MessageBox.Show("エラー履歴はありません", "FastFileFinder", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                Clipboard.SetText(string.Join(Environment.NewLine, errorBuffer.ToArray()));
+                statusMessage = "エラー履歴をコピーしました";
+                statusMessageExpire = DateTime.Now.AddSeconds(5);
+                UpdateStatusLabels();
+            }
+            catch
+            {
+            }
+        }
+
         private void Grid_CellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.Button == MouseButtons.Right && e.RowIndex >= 0)
@@ -1274,3 +1523,4 @@ namespace FastFileFinder
         }
     }
 }
+
