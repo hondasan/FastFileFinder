@@ -4,6 +4,8 @@
 import argparse
 import os
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -24,12 +26,21 @@ except Exception:  # pragma: no cover - dependency may be missing
     openpyxl = None  # type: ignore
     get_column_letter = None  # type: ignore
 
-try:  # legacy Office via COM
-    import pythoncom  # type: ignore
-    import win32com.client  # type: ignore
-except Exception:  # pragma: no cover - optional
-    pythoncom = None  # type: ignore
-    win32com = None  # type: ignore
+try:  # xlrd for legacy .xls (requires <=1.2)
+    import xlrd  # type: ignore
+
+    def _xlrd_supports_xls() -> bool:
+        try:
+            version = getattr(xlrd, "__version__", "0")
+            parts = [int(p) for p in version.split(".")[:2]]
+            return len(parts) >= 2 and (parts[0], parts[1]) < (2, 0)
+        except Exception:
+            return True
+
+    if not _xlrd_supports_xls():  # pragma: no cover - depends on environment
+        xlrd = None  # type: ignore
+except Exception:  # pragma: no cover - dependency may be missing
+    xlrd = None  # type: ignore
 
 
 # Common encodings to try for text files
@@ -74,9 +85,11 @@ def warn_once(kind: str, message: str) -> None:
     sys.stderr.flush()
 
 
-def iter_paths(folder: str, recursive: bool):
+def iter_paths(folder: str, recursive: bool, excluded: set):
     if recursive:
-        for root, _, files in os.walk(folder):
+        excluded_lower = {name.lower() for name in excluded}
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [d for d in dirs if d.lower() not in excluded_lower]
             for name in files:
                 yield os.path.join(root, name)
     else:
@@ -244,99 +257,103 @@ def scan_xlsx(path: str, matcher, perfile: int) -> int:
     return hits
 
 
-def scan_doc_legacy(path: str, matcher, perfile: int) -> int:
-    if win32com is None or pythoncom is None:
-        warn_once("doc", "pywin32 がないため .doc をスキップします")
-        return 0
-    hits = 0
-    pythoncom.CoInitialize()
+ANTIWORD_TIMEOUT = 10
+
+
+def extract_doc_text(path: str):
+    antiword = shutil.which("antiword")
+    if not antiword:
+        warn_once("doc", "antiword が見つからないため .doc をスキップします")
+        return []
+
+    env = os.environ.copy()
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("LC_ALL", "C.UTF-8")
     try:
-        try:
-            word = win32com.client.Dispatch("Word.Application")
-        except Exception as exc:
-            warn_once("doc-open", f"Word COM を初期化できません (.doc スキップ): {exc}")
-            return 0
-        word.Visible = False
-        try:
-            doc = word.Documents.Open(
-                path,
-                ConfirmConversions=False,
-                ReadOnly=True,
-                AddToRecentFiles=False,
-            )
-        except Exception as exc:
-            warn_once(f"doc:{path}", f".doc 読み込み失敗: {path} ({exc})")
-            word.Quit()
-            return 0
-        try:
-            text = doc.Range().Text
-        finally:
-            doc.Close(False)
-            word.Quit()
-        for lineno, line in enumerate(text.splitlines(), 1):
-            if matcher(line):
-                emit_tsv(path, "doc", lineno, line)
-                hits += 1
-                if perfile and hits >= perfile:
-                    break
-    finally:
-        pythoncom.CoUninitialize()
+        completed = subprocess.run(
+            [antiword, path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            errors="replace",
+            timeout=ANTIWORD_TIMEOUT,
+            env=env,
+        )
+    except Exception as exc:
+        warn_once(f"doc:{path}", f"antiword 実行に失敗: {exc}")
+        return []
+
+    if completed.returncode != 0:
+        warn_once(
+            f"doc:{path}",
+            f"antiword がエラー終了: {path} (code={completed.returncode}, {completed.stderr.strip()})",
+        )
+        return []
+
+    return completed.stdout.splitlines()
+
+
+def scan_doc_legacy(path: str, matcher, perfile: int) -> int:
+    lines = extract_doc_text(path)
+    if not lines:
+        return 0
+
+    hits = 0
+    for lineno, line in enumerate(lines, 1):
+        if matcher(line):
+            emit_tsv(path, "doc", lineno, line)
+            hits += 1
+            if perfile and hits >= perfile:
+                break
     return hits
 
 
+def _excel_column_name(index: int) -> str:
+    name = ""
+    i = index
+    while i >= 0:
+        i, remainder = divmod(i, 26)
+        name = chr(65 + remainder) + name
+        i -= 1
+    return name
+
+
 def scan_xls_legacy(path: str, matcher, perfile: int) -> int:
-    if win32com is None or pythoncom is None:
-        warn_once("xls", "pywin32 がないため .xls をスキップします")
+    if xlrd is None:
+        warn_once("xls", "xlrd<=1.2 がインストールされていないため .xls をスキップします")
         return 0
-    hits = 0
-    pythoncom.CoInitialize()
+
     try:
-        try:
-            excel = win32com.client.Dispatch("Excel.Application")
-        except Exception as exc:
-            warn_once("xls-open", f"Excel COM を初期化できません (.xls スキップ): {exc}")
-            return 0
-        excel.Visible = False
-        excel.DisplayAlerts = False
-        try:
-            wb = excel.Workbooks.Open(path, ReadOnly=True)
-        except Exception as exc:
-            warn_once(f"xls:{path}", f".xls 読み込み失敗: {path} ({exc})")
-            excel.Quit()
-            return 0
-        try:
-            for sheet in wb.Worksheets:
-                try:
-                    used = sheet.UsedRange
-                    values = used.Value
-                except Exception:
-                    continue
-                rows = values
-                if rows is None:
-                    continue
-                if not isinstance(rows, (list, tuple)):
-                    rows = [[rows]]
-                for row_idx, row in enumerate(rows, 1):
-                    if not isinstance(row, (list, tuple)):
-                        row = [row]
-                    for col_idx, value in enumerate(row, 1):
-                        if value in (None, ""):
-                            continue
-                        text = str(value).strip()
-                        if not text:
-                            continue
-                        entry = f"{sheet.Name}!{col_idx},{row_idx}"
-                        if matcher(text):
-                            emit_tsv(path, entry, row_idx, text)
-                            hits += 1
-                            if perfile and hits >= perfile:
-                                excel.Quit()
-                                return hits
-        finally:
-            wb.Close(False)
-            excel.Quit()
+        workbook = xlrd.open_workbook(path, on_demand=True)
+    except Exception as exc:
+        warn_once(f"xls:{path}", f".xls 読み込み失敗: {path} ({exc})")
+        return 0
+
+    hits = 0
+    try:
+        for sheet in workbook.sheets():
+            for row_idx in range(sheet.nrows):
+                for col_idx in range(sheet.ncols):
+                    try:
+                        value = sheet.cell_value(row_idx, col_idx)
+                    except Exception:
+                        continue
+                    if value in (None, ""):
+                        continue
+                    text = str(value).strip()
+                    if not text:
+                        continue
+                    entry = f"{sheet.name}!{_excel_column_name(col_idx)}{row_idx + 1}"
+                    if matcher(text):
+                        emit_tsv(path, entry, row_idx + 1, text)
+                        hits += 1
+                        if perfile and hits >= perfile:
+                            return hits
     finally:
-        pythoncom.CoUninitialize()
+        try:
+            workbook.release_resources()
+        except Exception:
+            pass
     return hits
 
 
@@ -373,11 +390,18 @@ def main() -> None:
     ap.add_argument("--excel", action="store_true")
     ap.add_argument("--legacy", action="store_true")
     ap.add_argument("--max-workers", type=int, default=0)
+    ap.add_argument("--exclude-folders", default="")
     args = ap.parse_args()
 
     ext_filter = set(
         e.strip().lower()
         for e in args.exts.replace(",", ";").split(";")
+        if e.strip()
+    )
+
+    exclude_filter = set(
+        e.strip().lower()
+        for e in args.exclude_folders.replace(",", ";").split(";")
         if e.strip()
     )
 
@@ -388,7 +412,7 @@ def main() -> None:
         sys.stderr.flush()
         return
 
-    files = list(iter_paths(args.folder, args.recursive))
+    files = list(iter_paths(args.folder, args.recursive, exclude_filter))
     emit_status("queued", len(files))
 
     max_workers = args.max_workers if args.max_workers > 0 else (os.cpu_count() or 4)
