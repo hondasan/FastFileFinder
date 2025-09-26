@@ -25,7 +25,7 @@ FastFileFinder は Python 製スキャナ `fastfilefinder_scan.py` を WinForms 
 | Python 3.8+ | 必須 |  | `python` コマンドから呼び出されます |
 | `python-docx` | 任意 | 最新 | `.docx` の本文検索に使用 |
 | `openpyxl` | 任意 | 最新 | `.xlsx` のセル検索に使用 |
-| `pywin32` | 任意 | 最新 | Microsoft Word COM を利用して `.doc` (旧形式) をテキスト化。Word 未インストールまたは Office と Python のビット数 (32/64) が一致しない場合は自動スキップ |
+| `pywin32` | 任意 | 最新 | Microsoft Word COM を利用して `.doc` (旧形式) をテキスト化。Word と Python のビット数 (32/64) を必ず一致させてください。既定では COM 変換が必須です |
 | LibreOffice (`soffice`) | 任意 | 7.x 以降 | `.doc` 変換のフォールバック。Word COM が利用できない環境でもテキスト化を試みます |
 | `antiword` | 任意 | 最新 | LibreOffice も利用できない場合の最終フォールバック |
 | `xlrd` | 任意 | 1.2.x | `.xls` (旧形式) のセル検索に使用。2.x 系では `.xls` 非対応のため 1.2 系を利用してください |
@@ -43,7 +43,7 @@ pip install pywin32
 ## 使い方
 
 1. Visual Studio 2019 以降で `FastFileFinder.sln` を開き、.NET Framework 4.8 ターゲットの `FastFileFinder` プロジェクトをビルドします。
-2. 実行ファイルと同じフォルダに `fastfilefinder_scan.py` を配置 (プロジェクト構成で自動コピー)。
+2. 実行ファイルと同じフォルダに `fastfilefinder_scan.py` を配置 (プロジェクト構成で自動コピー)。32bit Word を利用する場合は、32bit Python (`C:\Users\k_honda\AppData\Local\Programs\Python\Python313-32\python.exe`) を指定して UI の「Python パス」に保存してください。
 3. アプリ起動後、次のいずれかで起点フォルダを設定します。
    - フォルダをメインウィンドウにドラッグ＆ドロップ。
    - 最近使ったフォルダ (最大 10 件) から選択。
@@ -72,11 +72,15 @@ python fastfilefinder_scan.py --folder <dir> --query <text>
     [--exclude-folders ".git;bin"]
     [--perfile N] [--max-workers N]
     [--word] [--excel] [--legacy]
+    [--legacy-doc {com,auto,external}]
+    [--diag]
 ```
 
-- `--legacy` を有効にすると `.doc` / `.xls` を試行します。`pywin32` (および Microsoft Word) や `xlrd (<=1.2)` が無い場合は警告のみでスキップします。
+- `--legacy` を有効にすると `.doc` / `.xls` を試行します。`--legacy-doc` の既定値は `com` で、Microsoft Word COM による変換のみを許可します。
 - `--exclude-folders` はフォルダ名単位でマッチし、サブツリー全体を探索対象から除外します。
 - `--max-workers` を 0 (既定) にすると `os.cpu_count()` を基準に自動調整します。
+- `--legacy-doc auto` にすると、COM で失敗した場合に LibreOffice (`soffice`) や `antiword` へ自動フォールバックします。`external` を指定すると COM を使用せず、外部ツールのみで試行します。
+- `--diag` を指定すると処理開始前に `diag: py=32, word-detect=OK, win32com-cache=...` のような診断行を標準エラーに出力します。
 
 ## チューニングと注意点
 
@@ -87,13 +91,18 @@ python fastfilefinder_scan.py --folder <dir> --query <text>
 
 ### 旧形式 Word (.doc) の変換フロー
 
-`.doc` は次の優先順位でテキスト化を試行します。どれかが成功した時点で後続のフォールバックは実行されません。
+`.doc` 変換は `--legacy-doc` のモードに従います。既定の `com` では Microsoft Word COM (pywin32) のみを使用し、確実に Word でテキスト化します。`auto` を選択した場合は COM → LibreOffice (`soffice --headless`) → `antiword` の順でフォールバックし、`external` を選択すると最初から外部ツールのみを使用します。
 
-1. **Microsoft Word COM (pywin32)** — Word がインストールされていて Python とビット数 (32/64) が一致している場合。
-2. **LibreOffice (`soffice --headless`)** — Word COM が利用できない、または失敗したときに自動的に呼び出します。
-3. **antiword** — 上記がすべて失敗した場合の最終フォールバック。
+COM 変換が失敗すると `ERR .doc convert failed [COM-Open]: <path> (HRESULT=0x..., msg=...)` のような 1 行メッセージを標準エラーに記録します。段階別のメッセージから原因を切り分けられます。
 
-すべての経路で失敗した場合でもツールは継続し、標準エラー出力に 1 行のメッセージを残します。例: `ERR .doc convert failed [soffice-not-found]: C:\docs\sample.doc`。`pywin32` が未インストールの場合も同様に `ERR .doc convert failed [COM-missing]: ...` が出力されます。
+#### 典型的なメッセージと対処例
+
+- `[COM-Init]` — `pywin32` が未インストール、または `pythoncom.CoInitialize()` に失敗しました。`pip install pywin32` と `python -m pywin32_postinstall -install` を再実行してください。
+- `[COM-Launch]` — Word COM を起動できません。Word のインストールと Office/Python のビット数一致 (例: 32bit Word + 32bit Python) を確認します。
+- `[COM-Open]` — 対象ドキュメントの読み込みに失敗しました。ファイルのロック、パス長、エンコードを確認してください。
+- `[COM-SaveAs]` / `[COM-Read]` — Word での保存または保存済みファイルの読み込みに失敗しました。保護ビューやアクセス権を確認してください。
+
+診断が必要な場合は `--diag` を指定し、`word-detect=OK/NG` や `win32com-cache` のパスを確認してください。`auto` や `external` モードを利用する際は LibreOffice (`soffice`) や `antiword` を PATH 上に用意する必要があります。
 
 ## ライセンス
 

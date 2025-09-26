@@ -154,6 +154,18 @@ def _log_doc_error(stage: str, path: str, detail: Optional[str] = None) -> None:
     sys.stderr.flush()
 
 
+def _format_com_exception(exc: Exception) -> str:
+    parts = []
+    hresult = getattr(exc, "hresult", None)
+    if isinstance(hresult, int):
+        value = hresult if hresult >= 0 else (hresult & 0xFFFFFFFF)
+        parts.append(f"HRESULT=0x{value:08X}")
+    text = _error_text(exc)
+    if text:
+        parts.append(f"msg={text}")
+    return ", ".join(parts)
+
+
 def emit_tsv(path: str, entry: str, lineno: int, line: str) -> None:
     line = line.replace("\t", " ").rstrip("\r\n")
     with stdout_lock:
@@ -356,6 +368,66 @@ DOC_LOCK_RETRY_DELAY = 0.6
 WORD_DIAGNOSTICS_EMITTED = False
 
 
+def _emit_startup_diag() -> None:
+    arch = platform.architecture()[0]
+    if "64" in arch:
+        py_bits = "64"
+    elif "32" in arch:
+        py_bits = "32"
+    else:
+        py_bits = arch
+
+    cache_info = "unavailable"
+    if win32com is not None:
+        try:
+            cache_path = win32com.client.gencache.GetGeneratePath()
+        except Exception as exc:
+            cache_info = f"error:{_clean_detail(_error_text(exc)) or type(exc).__name__}"
+        else:
+            if cache_path:
+                try:
+                    os.makedirs(cache_path, exist_ok=True)
+                except Exception:
+                    pass
+                cache_info = cache_path
+            else:
+                cache_info = "unknown"
+
+    word_detect = "NG"
+    if pythoncom is not None and win32com is not None:
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        else:
+            try:
+                word = win32com.client.gencache.EnsureDispatch("Word.Application")
+            except Exception:
+                word_detect = "NG"
+            else:
+                word_detect = "OK"
+                try:
+                    word.Visible = False
+                except Exception:
+                    pass
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+    message = (
+        f"diag: py={py_bits}, word-detect={word_detect}, "
+        f"win32com-cache={cache_info}, python_exe={sys.executable}"
+    )
+    sys.stderr.write(message + "\n")
+    sys.stderr.flush()
+
+
 def _error_text(exc: Exception) -> str:
     if pywintypes is not None and isinstance(exc, pywintypes.com_error):
         try:
@@ -422,21 +494,30 @@ def _build_open_sequences(file_name: str) -> List[dict]:
         "ReadOnly": True,
         "AddToRecentFiles": False,
         "ConfirmConversions": False,
-        "Visible": False,
+        "Visible": True,
+        "Revert": True,
     }
-    sequences = [base.copy()]
-    for encoding in (65001, 1200):
+    sequences: List[dict] = []
+
+    def _append(args: dict) -> None:
+        sequences.append(args)
+
+    _append(base.copy())
+
+    for encoding in (1200, 65001):
         args = base.copy()
         args["Encoding"] = encoding
-        sequences.append(args)
-    revert = base.copy()
-    revert["Revert"] = True
-    sequences.append(revert)
-    for encoding in (65001, 1200):
-        args = base.copy()
-        args["Revert"] = True
+        _append(args)
+
+    alt = base.copy()
+    alt["Revert"] = False
+    _append(alt)
+
+    for encoding in (1200, 65001):
+        args = alt.copy()
         args["Encoding"] = encoding
-        sequences.append(args)
+        _append(args)
+
     return sequences
 
 
@@ -479,7 +560,7 @@ def _describe_word_launch_failure(exc: Exception) -> str:
 def _convert_doc_via_com(path: str) -> List[str]:
     if pythoncom is None or win32com is None:
         raise DocConversionError(
-            "COM-missing",
+            "COM-Init",
             "pywin32 がインストールされていないため Word COM を利用できません (必要に応じて 'python -m pywin32_postinstall -install' を実行してください)",
         )
 
@@ -491,17 +572,23 @@ def _convert_doc_via_com(path: str) -> List[str]:
     last_open_args: Optional[dict] = None
 
     try:
-        pythoncom.CoInitialize()
+        try:
+            pythoncom.CoInitialize()
+        except Exception as exc:
+            raise DocConversionError("COM-Init", _format_com_exception(exc) or _error_text(exc))
         coinitialized = True
+
         try:
             word = win32com.client.gencache.EnsureDispatch("Word.Application")
         except Exception as exc:  # pragma: no cover - depends on Word availability
             reason = _describe_word_launch_failure(exc)
-            detail = f"{reason} ({_error_text(exc)}{_format_hresult(exc)})"
-            raise DocConversionError("COM-launch", detail)
+            detail = ", ".join(
+                part for part in [reason, _format_com_exception(exc)] if part
+            )
+            raise DocConversionError("COM-Launch", detail)
 
         try:
-            word.Visible = False
+            word.Visible = True
         except Exception:
             pass
         try:
@@ -547,11 +634,15 @@ def _convert_doc_via_com(path: str) -> List[str]:
 
         doc, last_open_args, open_error = _try_open_document(word, candidates)
         if doc is None:
-            detail = "Open failed"
+            detail_parts = []
             if open_error is not None:
-                detail = f"Open failed: {_error_text(open_error)}{_format_hresult(open_error)}"
-            detail += _summarize_open_args(last_open_args)
-            raise DocConversionError("COM-open", detail)
+                detail = _format_com_exception(open_error)
+                if detail:
+                    detail_parts.append(detail)
+            detail_args = _summarize_open_args(last_open_args)
+            if detail_args:
+                detail_parts.append(detail_args.strip(", "))
+            raise DocConversionError("COM-Open", ", ".join(detail_parts) or "msg=Open failed")
 
         fd, temp_raw = tempfile.mkstemp(suffix=".txt")
         os.close(fd)
@@ -570,8 +661,7 @@ def _convert_doc_via_com(path: str) -> List[str]:
                 else:
                     doc.SaveAs(save_target, WD_FORMAT_UNICODE_TEXT)
             except Exception as exc:
-                detail = f"Save failed: {_error_text(exc)}{_format_hresult(exc)}"
-                raise DocConversionError("COM-save", detail)
+                raise DocConversionError("COM-SaveAs", _format_com_exception(exc) or _error_text(exc))
         finally:
             try:
                 doc.Close(False)
@@ -583,13 +673,11 @@ def _convert_doc_via_com(path: str) -> List[str]:
             with open(temp_path, "r", encoding="utf-16", errors="replace") as reader:
                 return reader.read().splitlines()
         except Exception as exc:
-            detail = f"Read failed: {_error_text(exc)}{_format_hresult(exc)}"
-            raise DocConversionError("COM-read", detail)
+            raise DocConversionError("COM-Read", _format_com_exception(exc) or _error_text(exc))
     except DocConversionError:
         raise
     except Exception as exc:
-        detail = f"Unexpected failure: {_error_text(exc)}{_format_hresult(exc)}"
-        raise DocConversionError("COM", detail)
+        raise DocConversionError("COM", _format_com_exception(exc) or _error_text(exc))
     finally:
         if doc is not None:
             try:
@@ -738,13 +826,23 @@ def _convert_doc_via_antiword(path: str) -> List[str]:
     raise DocConversionError("antiword", "antiword での変換に失敗しました")
 
 
-def iter_doc_legacy_lines(path: str) -> Iterable[str]:
-    converters = [_convert_doc_via_com, _convert_doc_via_soffice, _convert_doc_via_antiword]
+def iter_doc_legacy_lines(path: str, mode: str) -> Iterable[str]:
+    converters = []
+    normalized_mode = (mode or "").lower()
+    if normalized_mode in {"com", "auto"}:
+        converters.append(_convert_doc_via_com)
+    if normalized_mode in {"auto", "external"}:
+        converters.append(_convert_doc_via_soffice)
+        converters.append(_convert_doc_via_antiword)
+
     for converter in converters:
         try:
             lines = converter(path)
         except DocConversionError as exc:
             _log_doc_error(exc.stage, path, exc.detail)
+            continue
+        except Exception as exc:  # pragma: no cover - unexpected path
+            _log_doc_error("unexpected", path, str(exc))
             continue
 
         for line in lines:
@@ -752,9 +850,9 @@ def iter_doc_legacy_lines(path: str) -> Iterable[str]:
         return
 
 
-def scan_doc_legacy(path: str, matcher, perfile: int) -> int:
+def scan_doc_legacy(path: str, matcher, perfile: int, legacy_mode: str) -> int:
     hits = 0
-    for lineno, line in enumerate(iter_doc_legacy_lines(path), 1):
+    for lineno, line in enumerate(iter_doc_legacy_lines(path, legacy_mode), 1):
         if matcher(line):
             emit_tsv(path, "doc", lineno, line)
             hits += 1
@@ -826,7 +924,7 @@ def scan_file(path: str, matcher, args, exts: set) -> int:
     if ext == "xlsx" and args.excel:
         return scan_xlsx(path, matcher, perfile)
     if ext == "doc" and args.legacy and args.word:
-        return scan_doc_legacy(path, matcher, perfile)
+        return scan_doc_legacy(path, matcher, perfile, args.legacy_doc)
     if ext == "xls" and args.legacy and args.excel:
         return scan_xls_legacy(path, matcher, perfile)
     return scan_text_file(path, matcher, exts, perfile)
@@ -844,9 +942,16 @@ def main() -> None:
     ap.add_argument("--word", action="store_true")
     ap.add_argument("--excel", action="store_true")
     ap.add_argument("--legacy", action="store_true")
+    ap.add_argument("--legacy-doc", choices=["auto", "com", "external"], default="com")
     ap.add_argument("--max-workers", type=int, default=0)
     ap.add_argument("--exclude-folders", default="")
+    ap.add_argument("--diag", action="store_true")
     args = ap.parse_args()
+
+    if args.diag:
+        _emit_startup_diag()
+
+    args.legacy_doc = (args.legacy_doc or "com").lower()
 
     ext_filter = set(
         e.strip().lower()
