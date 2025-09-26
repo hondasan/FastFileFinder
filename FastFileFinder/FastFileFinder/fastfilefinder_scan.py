@@ -4,14 +4,14 @@
 import argparse
 import os
 import re
-import shutil
-import subprocess
 import sys
 import threading
 import time
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import TextIOWrapper
 from zipfile import BadZipFile, ZipFile
+from typing import List, Optional
 
 # Optional dependencies
 try:  # python-docx for .docx
@@ -41,6 +41,13 @@ try:  # xlrd for legacy .xls (requires <=1.2)
         xlrd = None  # type: ignore
 except Exception:  # pragma: no cover - dependency may be missing
     xlrd = None  # type: ignore
+
+try:  # pywin32 for legacy .doc via Word COM
+    import pythoncom  # type: ignore
+    import win32com.client  # type: ignore
+except Exception:  # pragma: no cover - dependency may be missing
+    pythoncom = None  # type: ignore
+    win32com = None  # type: ignore
 
 
 # Common encodings to try for text files
@@ -257,40 +264,88 @@ def scan_xlsx(path: str, matcher, perfile: int) -> int:
     return hits
 
 
-ANTIWORD_TIMEOUT = 10
-
-
-def extract_doc_text(path: str):
-    antiword = shutil.which("antiword")
-    if not antiword:
-        warn_once("doc", "antiword が見つからないため .doc をスキップします")
+def extract_doc_text(path: str) -> List[str]:
+    if pythoncom is None or win32com is None:
+        warn_once("doc", "pywin32 がインストールされていないため .doc をスキップします")
         return []
 
-    env = os.environ.copy()
-    env.setdefault("LANG", "C.UTF-8")
-    env.setdefault("LC_ALL", "C.UTF-8")
+    temp_path: Optional[str] = None
+    word = None
+    doc = None
+    lines: List[str] = []
+    coinitialized = False
+
     try:
-        completed = subprocess.run(
-            [antiword, path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-            timeout=ANTIWORD_TIMEOUT,
-            env=env,
-        )
+        pythoncom.CoInitialize()
+        coinitialized = True
+        try:
+            word = win32com.client.Dispatch("Word.Application")
+        except Exception:
+            warn_once("doc:word", "Microsoft Word が利用できないため .doc をスキップします")
+            return []
+
+        word.Visible = False
+        word.DisplayAlerts = 0
+
+        target_path = os.path.abspath(path)
+
+        try:
+            try:
+                doc = word.Documents.Open(target_path, ReadOnly=True, AddToRecentFiles=False)
+            except TypeError:
+                doc = word.Documents.Open(target_path, ReadOnly=True)
+        except Exception as exc:
+            warn_once(f"doc:{path}", f".doc を開けませんでした: {path} ({exc})")
+            return []
+
+        fd, temp_path = tempfile.mkstemp(suffix=".txt")
+        os.close(fd)
+
+        try:
+            doc.SaveAs2(temp_path, FileFormat=2)
+        except Exception as exc:
+            warn_once(f"doc:{path}", f".doc をテキストへ変換できませんでした: {path} ({exc})")
+            return []
+        finally:
+            try:
+                doc.Close(False)
+            except Exception:
+                pass
+            doc = None
+
+        for enc in ENCODINGS:
+            try:
+                with open(temp_path, "r", encoding=enc, errors="replace") as reader:
+                    lines = reader.read().splitlines()
+                break
+            except UnicodeDecodeError:
+                continue
+
+        return lines
     except Exception as exc:
-        warn_once(f"doc:{path}", f"antiword 実行に失敗: {exc}")
+        warn_once(f"doc:{path}", f"Word からの .doc 変換中にエラー: {path} ({exc})")
         return []
-
-    if completed.returncode != 0:
-        warn_once(
-            f"doc:{path}",
-            f"antiword がエラー終了: {path} (code={completed.returncode}, {completed.stderr.strip()})",
-        )
-        return []
-
-    return completed.stdout.splitlines()
+    finally:
+        if doc is not None:
+            try:
+                doc.Close(False)
+            except Exception:
+                pass
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:
+                pass
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        if coinitialized:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 
 def scan_doc_legacy(path: str, matcher, perfile: int) -> int:
