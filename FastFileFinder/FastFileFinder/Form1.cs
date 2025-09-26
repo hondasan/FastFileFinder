@@ -1042,6 +1042,11 @@ namespace FastFileFinder
             if (chkLegacy.Checked)
             {
                 args.Add("--legacy");
+                if (chkWord.Checked)
+                {
+                    args.Add("--legacy-doc");
+                    args.Add("com");
+                }
             }
 
             return string.Join(" ", args.Select(QuoteArgument));
