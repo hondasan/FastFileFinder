@@ -34,6 +34,7 @@ namespace FastFileFinder
             this.toolStripButtonStart = new System.Windows.Forms.ToolStripButton();
             this.toolStripButtonCancel = new System.Windows.Forms.ToolStripButton();
             this.toolStripButtonExport = new System.Windows.Forms.ToolStripButton();
+            this.toolStripButtonErrors = new System.Windows.Forms.ToolStripButton();
             this.panelConditions = new System.Windows.Forms.Panel();
             this.tableConditions = new System.Windows.Forms.TableLayoutPanel();
             this.labelRoot = new System.Windows.Forms.Label();
@@ -62,8 +63,10 @@ namespace FastFileFinder
             this.labelOffice = new System.Windows.Forms.Label();
             this.flowOffice = new System.Windows.Forms.FlowLayoutPanel();
             this.chkWord = new System.Windows.Forms.CheckBox();
+            this.chkWordLegacy = new System.Windows.Forms.CheckBox();
             this.chkExcel = new System.Windows.Forms.CheckBox();
-            this.chkLegacy = new System.Windows.Forms.CheckBox();
+            this.chkExcelLegacy = new System.Windows.Forms.CheckBox();
+            this.chkPdf = new System.Windows.Forms.CheckBox();
             this.labelQuickFilter = new System.Windows.Forms.Label();
             this.txtQuickFilter = new System.Windows.Forms.TextBox();
             this.labelOptions = new System.Windows.Forms.Label();
@@ -82,6 +85,7 @@ namespace FastFileFinder
             this.statusFiles = new System.Windows.Forms.ToolStripStatusLabel();
             this.statusHits = new System.Windows.Forms.ToolStripStatusLabel();
             this.statusMessage = new System.Windows.Forms.ToolStripStatusLabel();
+            this.statusProgress = new System.Windows.Forms.ToolStripProgressBar();
             this.uiTimer = new System.Windows.Forms.Timer(this.components);
             this.filterTimer = new System.Windows.Forms.Timer(this.components);
             this.contextMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
@@ -112,7 +116,8 @@ namespace FastFileFinder
             this.toolStripMain.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.toolStripButtonStart,
             this.toolStripButtonCancel,
-            this.toolStripButtonExport});
+            this.toolStripButtonExport,
+            this.toolStripButtonErrors});
             this.toolStripMain.Location = new System.Drawing.Point(0, 0);
             this.toolStripMain.Name = "toolStripMain";
             this.toolStripMain.Padding = new System.Windows.Forms.Padding(8, 6, 8, 6);
@@ -132,7 +137,7 @@ namespace FastFileFinder
             this.toolStripButtonStart.Click += new System.EventHandler(this.ToolStripButtonStart_Click);
             // 
             // toolStripButtonCancel
-            // 
+            //
             this.toolStripButtonCancel.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
             this.toolStripButtonCancel.Enabled = false;
             this.toolStripButtonCancel.Image = null;
@@ -142,16 +147,28 @@ namespace FastFileFinder
             this.toolStripButtonCancel.Size = new System.Drawing.Size(82, 36);
             this.toolStripButtonCancel.Text = "キャンセル";
             this.toolStripButtonCancel.Click += new System.EventHandler(this.ToolStripButtonCancel_Click);
-            // 
+            //
             // toolStripButtonExport
-            // 
+            //
             this.toolStripButtonExport.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
             this.toolStripButtonExport.Image = null;
+            this.toolStripButtonExport.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.toolStripButtonExport.Name = "toolStripButtonExport";
             this.toolStripButtonExport.Padding = new System.Windows.Forms.Padding(12, 0, 12, 0);
             this.toolStripButtonExport.Size = new System.Drawing.Size(94, 36);
             this.toolStripButtonExport.Text = "CSV 出力";
             this.toolStripButtonExport.Click += new System.EventHandler(this.ToolStripButtonExport_Click);
+            //
+            // toolStripButtonErrors
+            //
+            this.toolStripButtonErrors.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+            this.toolStripButtonErrors.Enabled = false;
+            this.toolStripButtonErrors.Image = null;
+            this.toolStripButtonErrors.Name = "toolStripButtonErrors";
+            this.toolStripButtonErrors.Padding = new System.Windows.Forms.Padding(12, 0, 12, 0);
+            this.toolStripButtonErrors.Size = new System.Drawing.Size(110, 36);
+            this.toolStripButtonErrors.Text = "エラーログ表示";
+            this.toolStripButtonErrors.Click += new System.EventHandler(this.ToolStripButtonErrors_Click);
             // 
             // panelConditions
             //
@@ -482,7 +499,7 @@ namespace FastFileFinder
             this.labelOffice.Name = "labelOffice";
             this.labelOffice.Size = new System.Drawing.Size(144, 32);
             this.labelOffice.TabIndex = 12;
-            this.labelOffice.Text = "Office 形式";
+            this.labelOffice.Text = "ファイル形式";
             this.labelOffice.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // flowOffice
@@ -490,8 +507,10 @@ namespace FastFileFinder
             this.flowOffice.AutoSize = true;
             this.flowOffice.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.flowOffice.Controls.Add(this.chkWord);
+            this.flowOffice.Controls.Add(this.chkWordLegacy);
             this.flowOffice.Controls.Add(this.chkExcel);
-            this.flowOffice.Controls.Add(this.chkLegacy);
+            this.flowOffice.Controls.Add(this.chkExcelLegacy);
+            this.flowOffice.Controls.Add(this.chkPdf);
             this.flowOffice.Dock = System.Windows.Forms.DockStyle.Fill;
             this.flowOffice.Location = new System.Drawing.Point(153, 195);
             this.flowOffice.Name = "flowOffice";
@@ -500,7 +519,7 @@ namespace FastFileFinder
             this.flowOffice.WrapContents = false;
             // 
             // chkWord
-            // 
+            //
             this.chkWord.AutoSize = true;
             this.chkWord.Checked = true;
             this.chkWord.CheckState = System.Windows.Forms.CheckState.Checked;
@@ -511,33 +530,57 @@ namespace FastFileFinder
             this.chkWord.TabIndex = 0;
             this.chkWord.Text = "Word (.docx)";
             this.chkWord.UseVisualStyleBackColor = true;
-            // 
+            //
+            // chkWordLegacy
+            //
+            this.chkWordLegacy.AutoSize = true;
+            this.chkWordLegacy.Location = new System.Drawing.Point(112, 3);
+            this.chkWordLegacy.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
+            this.chkWordLegacy.Name = "chkWordLegacy";
+            this.chkWordLegacy.Size = new System.Drawing.Size(116, 19);
+            this.chkWordLegacy.TabIndex = 1;
+            this.chkWordLegacy.Text = "旧Word (.doc)";
+            this.chkWordLegacy.UseVisualStyleBackColor = true;
+            //
             // chkExcel
-            // 
+            //
             this.chkExcel.AutoSize = true;
             this.chkExcel.Checked = true;
             this.chkExcel.CheckState = System.Windows.Forms.CheckState.Checked;
-            this.chkExcel.Location = new System.Drawing.Point(112, 3);
+            this.chkExcel.Location = new System.Drawing.Point(240, 3);
             this.chkExcel.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.chkExcel.Name = "chkExcel";
             this.chkExcel.Size = new System.Drawing.Size(104, 19);
-            this.chkExcel.TabIndex = 1;
+            this.chkExcel.TabIndex = 2;
             this.chkExcel.Text = "Excel (.xlsx)";
             this.chkExcel.UseVisualStyleBackColor = true;
-            // 
-            // chkLegacy
-            // 
-            this.chkLegacy.AutoSize = true;
-            this.chkLegacy.Location = new System.Drawing.Point(228, 3);
-            this.chkLegacy.Margin = new System.Windows.Forms.Padding(0);
-            this.chkLegacy.Name = "chkLegacy";
-            this.chkLegacy.Size = new System.Drawing.Size(140, 19);
-            this.chkLegacy.TabIndex = 2;
-            this.chkLegacy.Text = "旧形式 (.doc/.xls)";
-            this.chkLegacy.UseVisualStyleBackColor = true;
-            // 
+            //
+            // chkExcelLegacy
+            //
+            this.chkExcelLegacy.AutoSize = true;
+            this.chkExcelLegacy.Location = new System.Drawing.Point(356, 3);
+            this.chkExcelLegacy.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
+            this.chkExcelLegacy.Name = "chkExcelLegacy";
+            this.chkExcelLegacy.Size = new System.Drawing.Size(118, 19);
+            this.chkExcelLegacy.TabIndex = 3;
+            this.chkExcelLegacy.Text = "旧Excel (.xls)";
+            this.chkExcelLegacy.UseVisualStyleBackColor = true;
+            //
+            // chkPdf
+            //
+            this.chkPdf.AutoSize = true;
+            this.chkPdf.Checked = true;
+            this.chkPdf.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.chkPdf.Location = new System.Drawing.Point(486, 3);
+            this.chkPdf.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
+            this.chkPdf.Name = "chkPdf";
+            this.chkPdf.Size = new System.Drawing.Size(70, 19);
+            this.chkPdf.TabIndex = 4;
+            this.chkPdf.Text = "PDF";
+            this.chkPdf.UseVisualStyleBackColor = true;
+            //
             // labelQuickFilter
-            // 
+            //
             this.labelQuickFilter.AutoSize = true;
             this.labelQuickFilter.Dock = System.Windows.Forms.DockStyle.Fill;
             this.labelQuickFilter.Location = new System.Drawing.Point(3, 224);
@@ -707,6 +750,7 @@ namespace FastFileFinder
             this.statusElapsed,
             this.statusFiles,
             this.statusHits,
+            this.statusProgress,
             this.statusMessage});
             this.statusStrip.Location = new System.Drawing.Point(0, 700);
             this.statusStrip.Name = "statusStrip";
@@ -736,9 +780,21 @@ namespace FastFileFinder
             this.statusHits.Name = "statusHits";
             this.statusHits.Size = new System.Drawing.Size(77, 21);
             this.statusHits.Text = "ヒット: 0 件";
-            // 
+            //
+            // statusProgress
+            //
+            this.statusProgress.Alignment = System.Windows.Forms.ToolStripItemAlignment.Right;
+            this.statusProgress.AutoSize = false;
+            this.statusProgress.Margin = new System.Windows.Forms.Padding(0, 2, 12, 2);
+            this.statusProgress.MarqueeAnimationSpeed = 30;
+            this.statusProgress.Name = "statusProgress";
+            this.statusProgress.Size = new System.Drawing.Size(160, 22);
+            this.statusProgress.Step = 1;
+            this.statusProgress.Style = System.Windows.Forms.ProgressBarStyle.Continuous;
+            this.statusProgress.Visible = false;
+            //
             // statusMessage
-            // 
+            //
             this.statusMessage.Margin = new System.Windows.Forms.Padding(0, 3, 0, 2);
             this.statusMessage.Name = "statusMessage";
             this.statusMessage.Size = new System.Drawing.Size(35, 21);
@@ -844,6 +900,7 @@ namespace FastFileFinder
         private System.Windows.Forms.ToolStripButton toolStripButtonStart;
         private System.Windows.Forms.ToolStripButton toolStripButtonCancel;
         private System.Windows.Forms.ToolStripButton toolStripButtonExport;
+        private System.Windows.Forms.ToolStripButton toolStripButtonErrors;
         private System.Windows.Forms.Panel panelConditions;
         private System.Windows.Forms.TableLayoutPanel tableConditions;
         private System.Windows.Forms.Label labelRoot;
@@ -872,8 +929,10 @@ namespace FastFileFinder
         private System.Windows.Forms.Label labelOffice;
         private System.Windows.Forms.FlowLayoutPanel flowOffice;
         private System.Windows.Forms.CheckBox chkWord;
+        private System.Windows.Forms.CheckBox chkWordLegacy;
         private System.Windows.Forms.CheckBox chkExcel;
-        private System.Windows.Forms.CheckBox chkLegacy;
+        private System.Windows.Forms.CheckBox chkExcelLegacy;
+        private System.Windows.Forms.CheckBox chkPdf;
         private System.Windows.Forms.Label labelQuickFilter;
         private System.Windows.Forms.TextBox txtQuickFilter;
         private System.Windows.Forms.Label labelOptions;
@@ -892,6 +951,7 @@ namespace FastFileFinder
         private System.Windows.Forms.ToolStripStatusLabel statusFiles;
         private System.Windows.Forms.ToolStripStatusLabel statusHits;
         private System.Windows.Forms.ToolStripStatusLabel statusMessage;
+        private System.Windows.Forms.ToolStripProgressBar statusProgress;
         private System.Windows.Forms.Timer uiTimer;
         private System.Windows.Forms.Timer filterTimer;
         private System.Windows.Forms.ContextMenuStrip contextMenu;
