@@ -1149,14 +1149,16 @@ def scan_file(path: str, matcher, args, exts: set) -> int:
     if not should_target(path, exts):
         return 0
     if ext == "pdf":
-        return scan_pdf(path, matcher, perfile)
+        if args.pdf:
+            return scan_pdf(path, matcher, perfile)
+        return 0
     if ext == "docx" and args.word:
         return scan_docx(path, matcher, perfile)
     if ext == "xlsx" and args.excel:
         return scan_xlsx(path, matcher, perfile)
-    if ext == "doc" and args.legacy and args.word:
+    if ext == "doc" and args.word_legacy:
         return scan_doc_legacy(path, matcher, perfile, args.legacy_doc)
-    if ext == "xls" and args.legacy and args.excel:
+    if ext == "xls" and args.excel_legacy:
         return scan_xls_legacy(path, matcher, perfile)
     return scan_text_file(path, matcher, exts, perfile)
 
@@ -1174,6 +1176,9 @@ def main() -> None:
     ap.add_argument("--perfile", type=int, default=0)
     ap.add_argument("--word", action="store_true")
     ap.add_argument("--excel", action="store_true")
+    ap.add_argument("--pdf", action="store_true")
+    ap.add_argument("--word-legacy", action="store_true")
+    ap.add_argument("--excel-legacy", action="store_true")
     ap.add_argument("--legacy", action="store_true")
     ap.add_argument("--legacy-doc", choices=["auto", "com", "external"], default="com")
     ap.add_argument("--doc-single-thread", action="store_true")
@@ -1183,6 +1188,10 @@ def main() -> None:
     args = ap.parse_args()
 
     args.legacy_doc = (args.legacy_doc or "com").lower()
+
+    if getattr(args, "legacy", False):
+        args.word_legacy = True
+        args.excel_legacy = True
 
     if args.perfile is None or args.perfile < 0:
         args.perfile = 0

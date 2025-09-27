@@ -39,11 +39,18 @@ namespace FastFileFinder
         private static readonly Color PrimaryButtonPressedColor = Color.FromArgb(6, 111, 214);
         private static readonly Color PrimaryButtonBorderColor = Color.FromArgb(0, 98, 168);
 
+        private const string ErrorLogButtonLabel = "エラーログ表示";
+        private const int MaxErrorLogEntries = 500;
+
         private ConcurrentQueue<SearchResult> _pendingResults = new ConcurrentQueue<SearchResult>();
         private readonly List<SearchResult> _allResults = new List<SearchResult>();
         private readonly List<int> _visibleIndices = new List<int>();
         private readonly List<string> _recentFolders = new List<string>();
         private readonly Stopwatch _stopwatch = new Stopwatch();
+
+        private readonly List<FileFormatOption> _formatOptions = new List<FileFormatOption>();
+        private readonly object _errorLock = new object();
+        private readonly List<string> _errorLines = new List<string>();
 
         private Process _process;
         private System.Threading.CancellationTokenSource _cancellation;
@@ -93,6 +100,8 @@ namespace FastFileFinder
             comboKeywordMode.SelectedIndex = 0;
 
             ApplyButtonStyles();
+            InitializeFormatOptions();
+            UpdateErrorButtonState();
 
             uiTimer.Start();
         }
@@ -111,6 +120,7 @@ namespace FastFileFinder
             toolStripButtonStart.Tag = ModernToolStripRenderer.ButtonStyle.Primary;
             toolStripButtonCancel.Tag = ModernToolStripRenderer.ButtonStyle.Primary;
             toolStripButtonExport.Tag = ModernToolStripRenderer.ButtonStyle.Primary;
+            toolStripButtonErrors.Tag = ModernToolStripRenderer.ButtonStyle.Secondary;
 
             toolStripMain.Renderer = new ModernToolStripRenderer(
                 ButtonNormalColor,
@@ -129,6 +139,16 @@ namespace FastFileFinder
             toolStripMain.BackColor = Color.White;
         }
 
+        private void InitializeFormatOptions()
+        {
+            _formatOptions.Clear();
+            _formatOptions.Add(new FileFormatOption(chkWord, () => SingleArgument("--word")));
+            _formatOptions.Add(new FileFormatOption(chkWordLegacy, BuildWordLegacyArguments));
+            _formatOptions.Add(new FileFormatOption(chkExcel, () => SingleArgument("--excel")));
+            _formatOptions.Add(new FileFormatOption(chkExcelLegacy, () => SingleArgument("--excel-legacy")));
+            _formatOptions.Add(new FileFormatOption(chkPdf, () => SingleArgument("--pdf")));
+        }
+
         private static void ApplyButtonStyle(Button button, bool isPrimary)
         {
             if (button == null)
@@ -143,7 +163,11 @@ namespace FastFileFinder
             button.FlatAppearance.MouseDownBackColor = isPrimary ? PrimaryButtonPressedColor : ButtonPressedColor;
             button.BackColor = isPrimary ? PrimaryButtonNormalColor : ButtonNormalColor;
             button.ForeColor = isPrimary ? Color.White : ButtonTextColor;
-            button.Padding = new Padding(10, 5, 10, 5);
+            button.Padding = isPrimary ? new Padding(12, 6, 12, 6) : new Padding(8, 3, 8, 3);
+            if (!isPrimary)
+            {
+                button.MinimumSize = new Size(72, 28);
+            }
             button.UseVisualStyleBackColor = false;
         }
 
@@ -259,6 +283,8 @@ namespace FastFileFinder
         private void ToolStripButtonCancel_Click(object sender, EventArgs e) => CancelSearch();
 
         private void ToolStripButtonExport_Click(object sender, EventArgs e) => ExportResults();
+
+        private void ToolStripButtonErrors_Click(object sender, EventArgs e) => ShowErrorLog();
 
         private void BtnBrowse_Click(object sender, EventArgs e)
         {
@@ -972,6 +998,8 @@ namespace FastFileFinder
 
             PrepareHighlight(keywords, chkRegex.Checked);
 
+            ClearErrorLog();
+
             _pendingResults = new ConcurrentQueue<SearchResult>();
             _allResults.Clear();
             _visibleIndices.Clear();
@@ -1084,27 +1112,52 @@ namespace FastFileFinder
             args.Add("--max-workers");
             args.Add(((int)numParallel.Value).ToString(CultureInfo.InvariantCulture));
 
-            if (chkWord.Checked)
+            foreach (string argument in GetFormatArguments())
             {
-                args.Add("--word");
-            }
-
-            if (chkExcel.Checked)
-            {
-                args.Add("--excel");
-            }
-
-            if (chkLegacy.Checked)
-            {
-                args.Add("--legacy");
-                if (chkWord.Checked)
-                {
-                    args.Add("--legacy-doc");
-                    args.Add("com");
-                }
+                args.Add(argument);
             }
 
             return string.Join(" ", args.Select(QuoteArgument));
+        }
+
+        private IEnumerable<string> GetFormatArguments()
+        {
+            foreach (var option in _formatOptions)
+            {
+                foreach (string argument in option.GetArguments())
+                {
+                    if (!string.IsNullOrEmpty(argument))
+                    {
+                        yield return argument;
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<string> BuildWordLegacyArguments()
+        {
+            if (!chkWordLegacy.Checked)
+            {
+                yield break;
+            }
+
+            yield return "--word-legacy";
+            string mode = GetLegacyDocMode();
+            if (!string.IsNullOrEmpty(mode))
+            {
+                yield return "--legacy-doc";
+                yield return mode;
+            }
+        }
+
+        private string GetLegacyDocMode()
+        {
+            return "com";
+        }
+
+        private static IEnumerable<string> SingleArgument(string argument)
+        {
+            yield return argument;
         }
 
         private string GetKeywordLogic()
@@ -1397,8 +1450,18 @@ namespace FastFileFinder
                 return;
             }
 
+            lock (_errorLock)
+            {
+                _errorLines.Add(e.Data);
+                if (_errorLines.Count > MaxErrorLogEntries)
+                {
+                    _errorLines.RemoveRange(0, _errorLines.Count - MaxErrorLogEntries);
+                }
+            }
+
             BeginInvoke((Action)(() =>
             {
+                UpdateErrorButtonState();
                 SetStatusMessage("⚠ " + e.Data, TimeSpan.FromSeconds(8));
             }));
         }
@@ -1530,6 +1593,7 @@ namespace FastFileFinder
             statusMessage.Text = message;
             statusMessage.ToolTipText = !string.IsNullOrEmpty(_currentFile) ? ToDisplayPath(_currentFile) : string.Empty;
             toolStripButtonExport.Enabled = !_isSearching && _visibleIndices.Count > 0;
+            UpdateProgressIndicator();
         }
 
         private static string Shorten(string value, int max = 80)
@@ -1552,6 +1616,76 @@ namespace FastFileFinder
             UpdateStatusDisplay();
         }
 
+        private void ClearErrorLog()
+        {
+            lock (_errorLock)
+            {
+                _errorLines.Clear();
+            }
+
+            UpdateErrorButtonState();
+        }
+
+        private void UpdateErrorButtonState()
+        {
+            int count;
+            lock (_errorLock)
+            {
+                count = _errorLines.Count;
+            }
+
+            string label = count > 0
+                ? string.Format(CultureInfo.InvariantCulture, "{0} ({1})", ErrorLogButtonLabel, count)
+                : ErrorLogButtonLabel;
+
+            toolStripButtonErrors.Text = label;
+            toolStripButtonErrors.Enabled = count > 0;
+            toolStripButtonErrors.ToolTipText = count > 0
+                ? "検索中に発生したエラーや警告を表示します。"
+                : "検索中に発生したエラーメッセージはありません。";
+        }
+
+        private void UpdateProgressIndicator()
+        {
+            if (statusProgress == null)
+            {
+                return;
+            }
+
+            if (_isSearching)
+            {
+                statusProgress.Visible = true;
+                if (_queuedFiles > 0)
+                {
+                    statusProgress.Style = ProgressBarStyle.Continuous;
+                    statusProgress.MarqueeAnimationSpeed = 0;
+                    double ratio = _queuedFiles > 0 ? (double)_processedFiles / _queuedFiles : 0d;
+                    int percent = (int)Math.Round(ratio * 100.0, MidpointRounding.AwayFromZero);
+                    percent = Math.Max(0, Math.Min(100, percent));
+                    statusProgress.Value = percent;
+                    statusProgress.ToolTipText = string.Format(CultureInfo.InvariantCulture, "進捗 {0}/{1} 件", _processedFiles, _queuedFiles);
+                }
+                else
+                {
+                    statusProgress.Style = ProgressBarStyle.Marquee;
+                    statusProgress.MarqueeAnimationSpeed = 30;
+                    statusProgress.ToolTipText = "処理中...";
+                }
+            }
+            else
+            {
+                if (statusProgress.Style == ProgressBarStyle.Marquee)
+                {
+                    statusProgress.MarqueeAnimationSpeed = 0;
+                }
+
+                statusProgress.Visible = false;
+                statusProgress.Style = ProgressBarStyle.Continuous;
+                statusProgress.Value = 0;
+                statusProgress.ToolTipText = string.Empty;
+            }
+        }
+
         private void SetInputsEnabled(bool enabled)
         {
             txtRoot.ReadOnly = !enabled;
@@ -1568,7 +1702,9 @@ namespace FastFileFinder
             numParallel.Enabled = enabled;
             chkWord.Enabled = enabled;
             chkExcel.Enabled = enabled;
-            chkLegacy.Enabled = enabled;
+            chkWordLegacy.Enabled = enabled;
+            chkExcelLegacy.Enabled = enabled;
+            chkPdf.Enabled = enabled;
             chkRecursive.Enabled = enabled;
             chkZip.Enabled = enabled;
 
@@ -1679,6 +1815,27 @@ namespace FastFileFinder
             }
         }
 
+        private void ShowErrorLog()
+        {
+            List<string> entries;
+            lock (_errorLock)
+            {
+                entries = new List<string>(_errorLines);
+            }
+
+            if (entries.Count == 0)
+            {
+                MessageBox.Show(this, "現在表示できるエラーログはありません。", "FastFileFinder", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var dialog = new ErrorLogDialog(entries))
+            {
+                dialog.StartPosition = FormStartPosition.CenterParent;
+                dialog.ShowDialog(this);
+            }
+        }
+
         private static string EscapeCsv(string value)
         {
             if (string.IsNullOrEmpty(value))
@@ -1687,6 +1844,86 @@ namespace FastFileFinder
             }
 
             return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        private sealed class FileFormatOption
+        {
+            private readonly CheckBox _checkBox;
+            private readonly Func<IEnumerable<string>> _argumentFactory;
+
+            public FileFormatOption(CheckBox checkBox, Func<IEnumerable<string>> argumentFactory)
+            {
+                _checkBox = checkBox;
+                _argumentFactory = argumentFactory;
+            }
+
+            public IEnumerable<string> GetArguments()
+            {
+                if (_checkBox == null || _argumentFactory == null)
+                {
+                    yield break;
+                }
+
+                if (!_checkBox.Checked)
+                {
+                    yield break;
+                }
+
+                var arguments = _argumentFactory();
+                if (arguments == null)
+                {
+                    yield break;
+                }
+
+                foreach (string argument in arguments)
+                {
+                    if (!string.IsNullOrEmpty(argument))
+                    {
+                        yield return argument;
+                    }
+                }
+            }
+        }
+
+        private sealed class ErrorLogDialog : Form
+        {
+            public ErrorLogDialog(IEnumerable<string> lines)
+            {
+                var entries = lines == null ? Array.Empty<string>() : lines.ToArray();
+                Text = string.Format(CultureInfo.InvariantCulture, "エラーログ ({0} 件)", entries.Length);
+                BackColor = Color.White;
+                ForeColor = Color.Black;
+                StartPosition = FormStartPosition.CenterParent;
+                MinimumSize = new Size(480, 320);
+                Size = new Size(720, 420);
+                Padding = new Padding(12);
+                ShowIcon = false;
+                ShowInTaskbar = false;
+
+                var textBox = new TextBox
+                {
+                    Dock = DockStyle.Fill,
+                    Multiline = true,
+                    ReadOnly = true,
+                    ScrollBars = ScrollBars.Both,
+                    WordWrap = false,
+                    BackColor = Color.White,
+                    ForeColor = Color.Black,
+                    BorderStyle = BorderStyle.FixedSingle,
+                };
+
+                try
+                {
+                    textBox.Font = new Font(FontFamily.GenericMonospace, 9f);
+                }
+                catch
+                {
+                    // Ignore font assignment failures.
+                }
+
+                textBox.Lines = entries;
+                Controls.Add(textBox);
+            }
         }
 
         private sealed class ModernToolStripRenderer : ToolStripProfessionalRenderer
